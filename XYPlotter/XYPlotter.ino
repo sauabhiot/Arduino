@@ -12,7 +12,7 @@
 #define clock_prescalar 1
 #define timer_frequency base_frequency/clock_prescalar
 
-#define total_gcodes 1
+#define total_gcodes 6
 
 double count=0.0;
 long times=0;
@@ -23,11 +23,72 @@ double mm_per_step = 1.00/(double)steps_per_mm; // 0.000625
 
 volatile double time_increment = 0.0;
 
+
+/*
+ // Anti clockwise 0 - 90
 char *gcodes[total_gcodes] = {
-  "G01 X0 Y50 F1000",
-  //"G02 X0 Y50 I0 J-50",
-  //"G02 X-50 Y0 I50 J0"
+  "G01 X100 Y100 F1000",
+  "G01 X150 Y100 F1000",
+  "G02 X100 Y150 I-50 J0",
+  
 };
+*/
+
+ /*
+ // Anti clockwise 90 - 180
+char *gcodes[total_gcodes] = {
+  "G01 X100 Y100 F1000",
+  "G01 X100 Y150 F1000",
+  "G02 X50 Y100 I0 J-50",
+  
+};
+*/
+
+/*
+// Anti clockwise Semi circle 0 - 180
+
+char *gcodes[total_gcodes] = {
+  "G01 X100 Y100 F1000",
+  "G01 X150 Y100 F1000",
+  "G02 X100 Y150 I-50 J0",
+  "G02 X50 Y100 I0 J-50",
+};
+
+*/
+
+/*
+// Anti clockwise 180 - 270
+char *gcodes[total_gcodes] = {
+  "G01 X100 Y100 F1000",
+  "G01 X50 Y100 F1000",
+  "G02 X100 Y50 I50 J0",
+  
+};
+
+*/
+
+/*
+// Anti clockwise 270 - 360
+char *gcodes[total_gcodes] = {
+  "G01 X100 Y100 F1000",
+  "G01 X100 Y50 F1000",
+  "G02 X150 Y100 I0 J50",
+  
+};
+*/
+
+// Anti clockwise Full circle 0 - 360
+
+char *gcodes[total_gcodes] = {
+  "G01 X100 Y100 F1000",
+  "G01 X150 Y100 F1000",
+  "G02 X100 Y150 I-50 J0",
+  "G02 X50 Y100 I0 J-50",
+  "G02 X100 Y50 I50 J0",
+  "G02 X150 Y100 I0 J50",
+};
+
+
 int c=1;
 int gcode_indx=0,prev_gcode_indx=0;
 volatile double x=0,y=0,e=0,f=0;
@@ -35,7 +96,7 @@ volatile double prev_x=0;
 volatile double prev_y=0;
 volatile double duration=0;
 volatile double distance=0;
-volatile double travelled=0;
+volatile double travelled=0;;
 double slope = 0.0;
 double dY = 0.0;
 double dX = 0.0;
@@ -54,6 +115,10 @@ double radius=0.0;
 double I=0.0,J=0.0;
 double arc_center_x=0;
 double arc_center_y=0;
+double theta;
+int x_decrease=0;
+int y_decrease=0;
+
 long count2=0;
 
 
@@ -66,8 +131,6 @@ void delay_1us_nop() {
 
 
 ISR(TIMER1_COMPA_vect){
-  //time_elapsed = time_elapsed + time_increment;
-  travelled=travelled+mm_per_step;
   if(travelled>distance){
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
     if(gcode_indx<total_gcodes-1) gcode_indx++;
@@ -75,77 +138,120 @@ ISR(TIMER1_COMPA_vect){
     Serial.println(p_x);
     Serial.println(p_y);
     //Serial.println(count2);
-    travelled=0;
-    ins_x=0;
-    ins_y=0;
+    
+    travelled=0.0;
+    ins_x=0.0;
+    ins_y=0.0;
     PORTB |= (1 << 0);
   }else{
+    //Serial.println(get_direction_x());
+    travelled = travelled + mm_per_step;
     PORTB &= ~(1<<0);  
     if(linear_movement==1){
-      //Serial.println("linear..");
       ins_x = travelled/formula_denominator;
       ins_y = slope * ins_x;
-      //PORTD |= (1 << 5);
-      if(abs(ins_x - p_x) >= mm_per_step){
-        p_x = p_x + mm_per_step;
-        PORTD |= (1 << 2);
-        delay_1us_nop();
-        PORTD &= ~(1 << 2);
-        //Serial.println("x");
-        //count2++;
+      //Serial.println(ins_y,DEC);
+      if(abs(ins_x)>mm_per_step){      
+        if(abs(abs(ins_x) - p_x) >= mm_per_step){
+          p_x = p_x + mm_per_step*get_direction_x();
+          step_x();
+        }
       }
-      if(abs(ins_y - p_y) >= mm_per_step){
-        p_y = p_y + mm_per_step;
-        PORTD |= (1 << 3);
-        delay_1us_nop();
-        PORTD &= ~(1 << 3);
-        //Serial.println("y");
+
+      if(abs(ins_y)>mm_per_step){
+        if(abs(abs(ins_y) - p_y) >= mm_per_step){
+          p_y = p_y + mm_per_step*get_direction_y();
+          step_y();
+        }
       }
     }else{
-      double theta = travelled/radius;
-      ins_x= cos(theta)*radius;
-      ins_y= sin(theta)*radius;
+      double arc_theta = travelled/radius;
       
-      if((p_x - ins_x) >= mm_per_step){
-        p_x = p_x - mm_per_step;
-        //Serial.println(ins_x);
-        //set_clockwise_for_x(); // TODO DIR is HARDCODED
-        set_direction();
-        PORTD |= (1 << 2);
-        delay_1us_nop();
-        PORTD &= ~(1 << 2);
+      //step_theta = get_direction_x() < 0 ? step_theta:(theta-step_theta);
+      //ins_x= arc_center_x+cos(arc_theta)*radius;
+      if(get_direction_x() > 0 && get_direction_y() > 0) { // BOTH INCREASING
+          //Serial.println(5);
+          ins_x= arc_center_x + sin(arc_theta)*radius;
+          ins_y= arc_center_y - cos(arc_theta)*radius;
+      } else if(get_direction_x() < 0 && get_direction_y() > 0) { // X DECREASING Y INCREASING
+          //Serial.println(6);
+          ins_x= arc_center_x + cos(arc_theta)*radius;
+          ins_y= arc_center_y + sin(arc_theta)*radius;
+      } else if(get_direction_x() > 0 && get_direction_y() < 0) { // X INCREASING  Y DECREASING
+          ins_x= arc_center_x - cos(arc_theta)*radius;
+          ins_y= arc_center_y - sin(arc_theta)*radius;
+          //Serial.println(7);
+      }else if(get_direction_x() < 0 && get_direction_y() < 0){ // BOTH DECREASING
+          ins_x= arc_center_x - sin(arc_theta)*radius;
+          ins_y= arc_center_y + cos(arc_theta)*radius;
+          //Serial.println(8);
       }
-      if(abs(ins_y - p_y) >= mm_per_step){
-        p_y = p_y + mm_per_step;
-        //set_anti_clockwise_for_y(); // TODO DIR is HARDCODED
-        set_direction();
-        PORTD |= (1 << 3);
-        delay_1us_nop();
-        PORTD &= ~(1 << 3);
+      
+      
+      //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
+      
+      
+      if(abs(abs(ins_x) - abs(p_x)) >= mm_per_step){
+        p_x = p_x + (mm_per_step  * get_direction_x());
+        step_x();
+        
       }
+
+      //step_theta = get_direction_y() > 0 ? (theta-step_theta):step_theta;
+      //ins_y= arc_center_y + sin(arc_theta)*radius;
+      //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
+      if(abs(abs(ins_y) - abs(p_y)) >= mm_per_step){
+        p_y = p_y + (mm_per_step * get_direction_y());
+        step_y();
+        
+      }
+      
     }
   }
 } 
 
+void step_x(){
+    PORTD |= (1 << 2);
+    delay_1us_nop();
+    PORTD &= ~(1 << 2);
+}
+
+void step_y(){
+    PORTD |= (1 << 3);
+    delay_1us_nop();
+    PORTD &= ~(1 << 3);
+}
+
 void set_duration(){
   
   if(linear_movement){
-    //Serial.println(linear_movement);
-    distance = sqrt((x*x) + (y*y));
+    double c_x = x - p_x;
+    double c_y = y - p_y;
+    distance = sqrt((c_x * c_x) + (c_y * c_y));
     duration = distance/f;
     dY = (y-prev_y);
     dX =  (x-prev_x)==0?0.00001:(x-prev_x);
     slope = ((double)dY/dX);
     formula_denominator =sqrt(1+slope*slope);
+    //Serial.println(slope);
   }else{
     //Serial.println(linear_movement);
     arc_center_x = I + prev_x;
     arc_center_y = J + prev_y;
+    //Serial.println(arc_center_x);
+    //Serial.println(arc_center_y);
     radius = sqrt(pow(prev_x - arc_center_x,2) + pow(prev_y - arc_center_y,2));  
+    
     chord_length = sqrt(pow(prev_x-x,2) + pow(prev_y-y,2));
-    double theta = (asin(chord_length/(2*radius)))*2;
+    
+    theta = (asin(chord_length/(2*radius)))*2;
+    //Serial.println(theta);
+    
     arc_length = theta * radius;
+    //Serial.println(arc_length);
     distance = arc_length;
+    
+    set_direction();
     //Serial.println(duration);
   }
   //Serial.println(duration);
@@ -183,16 +289,39 @@ void set_anti_clockwise_for_y(){
 
 
 void set_direction(){
-  if(x<p_x){ 
+  if((x - p_x) < 0){ 
     set_anti_clockwise_for_x();
-  }else{
+  }else if((x - p_x) > 0){
     set_clockwise_for_x();
   }
-  if(y<p_y){ 
+  if((y-p_y)<0){ 
     set_clockwise_for_y();
-  }else{
+  }else if((y - p_y) > 0){
     set_anti_clockwise_for_y();
   }
+}
+
+int get_direction_x(){
+  double inc = x - p_x;
+  //Serial.println(inc);
+  if(inc < 0)
+    return -1;
+  if(inc > 0)
+    return 1;
+  else
+    return 0;
+  //return (inc < mm_per_step) ? -1 : (inc > mm_per_step) ? 1 : 0;
+}
+
+int get_direction_y(){
+  double inc = y - p_y;
+  if(inc < 0)
+    return -1;
+  if(inc > 0)
+    return 1;
+  else
+    return 0;
+  //return (inc < mm_per_step) ? -1 : (inc > mm_per_step) ? 1 : 0;
 }
 
 
