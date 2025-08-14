@@ -77,6 +77,9 @@ char *gcodes[total_gcodes] = {
 };
 */
 
+
+
+
 /*
 // Anti clockwise Full circle 0 - 360
 
@@ -88,15 +91,24 @@ char *gcodes[total_gcodes] = {
   "G03 X100 Y50 I50 J0",
   "G03 X150 Y100 I0 J50",
 };
-
 */
 
 
+/*
 // From 340 to 20 Anti clockwise
 char *gcodes[total_gcodes] = {
    "G01 X100 Y100 F1000",
    "G01 X146.61 Y82.81 F1000",
    "G03 X146.66 Y117.03 I-46 J18",
+};
+*/
+
+
+// From 340 to 95 Anti clockwise
+char *gcodes[total_gcodes] = {
+   "G01 X100 Y100 F1000",
+   "G01 X146.61 Y82.81 F1000",
+   "G03 X95.64 Y149.81 I-46 J18",
 };
 
 
@@ -120,7 +132,7 @@ char *gcodes[total_gcodes] = {
 */
 int c=1;
 int gcode_indx = 0 , prev_gcode_indx = 0;
-int total_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
+int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 volatile double x=0,y=0,e=0,f=0;
 volatile double prev_x=0;
 volatile double prev_y=0;
@@ -181,6 +193,7 @@ double q4_y1_limit = 0;
 double q4_x2_limit = 0;
 double q4_y2_limit = 0;
 
+double intermediate_x = 0.0, intermediate_y = 0.0;
 
 void delay_1us_nop() {
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
@@ -193,7 +206,7 @@ void delay_1us_nop() {
 ISR(TIMER1_COMPA_vect){
   if(travelled>distance){
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
-    if(gcode_indx<total_gcodes-1) gcode_indx++;
+    if(gcode_indx<total_gcodes-1 && end_gcode_sub_indx == gcode_sub_indx) gcode_indx++;
     //Serial.println(travelled);
     //Serial.println(p_x);
     //Serial.println(p_y);
@@ -206,6 +219,7 @@ ISR(TIMER1_COMPA_vect){
     gcode_step_x = 0.0;
     gcode_step_y = 0.0;
     PORTB |= (1 << 0);
+    if(g_code == 2 || g_code == 3) next_quadrant();
   }else{
     //Serial.println(get_direction_x());
     travelled = travelled + mm_per_step;
@@ -337,11 +351,10 @@ if((q1_x1_limit > x) && (x > q1_x2_limit) && (q1_y1_limit < y) && (y < q1_y2_lim
   end_quadrant = 4;
 }
 
-//Serial.println(start_quadrant);
-//Serial.println(end_quadrant);
+
   int start_indx = (start_quadrant== 4) ? 0 : start_quadrant;
   int end_indx = end_quadrant;
-  total_gcode_sub_indx = (end_indx - start_indx) + 1;
+  end_gcode_sub_indx = (end_indx - start_indx) ;
   current_quadrant = start_quadrant;
   //Serial.println(total_gcode_sub_indx);
 }
@@ -357,7 +370,7 @@ void set_duration(){
     dX =  (x-prev_x)==0?0.0000001:(x-prev_x);
     slope = ((double)dY/dX);
     formula_denominator =sqrt(1+slope*slope);
-    //Serial.println(distance,DEC);
+    
   }else{
     clockwise = (g_code==2) ? 1 : 0;
     arc_center_x = I + prev_x;
@@ -371,35 +384,54 @@ void set_duration(){
 }
 
 void next_quadrant(){
-  current_quadrant = current_quadrant ==4?1:current_quadrant++;
+  if(current_quadrant!=end_quadrant){
+    current_quadrant = (current_quadrant == 4) ? 1 : (current_quadrant + 1);
+    gcode_sub_indx++;
+  }
+}
+
+void set_intermediate_coordinates(){
+  switch (current_quadrant) {
+    case 1:
+      intermediate_x = clockwise ? q1_x1_limit : q1_x2_limit;
+      intermediate_y = clockwise ? q1_y1_limit : q1_y2_limit;
+    break;
+    case 2:
+      intermediate_x = clockwise ? q2_x1_limit : q2_x2_limit;
+      intermediate_y = clockwise ? q2_y1_limit : q2_y2_limit;
+    break;
+    case 3:
+      intermediate_x = clockwise ? q3_x1_limit : q3_x2_limit;
+      intermediate_y = clockwise ? q3_y1_limit : q3_y2_limit;
+    break;
+    case 4:
+      intermediate_x = clockwise ? q4_x1_limit : q4_x2_limit;
+      intermediate_y = clockwise ? q4_y1_limit : q4_y2_limit;
+    break;
+
+  }
 
 }
 
 void process_quadrant_arc(){
-  int intermedite_x,intermediate_y;
-  if(current_quadrant != end_quadrant){
+  if((current_quadrant == start_quadrant) && (current_quadrant == end_quadrant)){
+    intermediate_x = x;
+    intermediate_y = y;
+  }else if(current_quadrant != end_quadrant){
     if(current_quadrant == start_quadrant){
-        switch (current_quadrant) {
-          case 1:
-            intermedite_x = clockwise ? q1_x1_limit : q1_x2_limit;
-            intermedite_y = clockwise ? q1_y1_limit : q1_y2_limit;
-          break;
-          case 2:
-            intermedite_x = clockwise ? q2_x1_limit : q2_x2_limit;
-            intermedite_y = clockwise ? q2_y1_limit : q2_y2_limit;
-          break;
-          case 3:
-            intermedite_x = clockwise ? q3_x1_limit : q3_x2_limit;
-            intermedite_y = clockwise ? q3_y1_limit : q3_y2_limit;
-          break;
-          case 4:
-            intermedite_x = clockwise ? q4_x1_limit : q4_x2_limit;
-            intermedite_y = clockwise ? q4_y1_limit : q4_y2_limit;
-          break;
-
-        }
+      set_intermediate_coordinates();
+    }else{
+      prev_x = intermediate_x;
+      prev_y = intermediate_y;
+      set_intermediate_coordinates();
     }
-    
+  }else{
+    if(current_quadrant!=start_quadrant){
+      prev_x = intermediate_x;
+      prev_y = intermediate_y;
+      intermediate_x = x;
+      intermediate_y = y;
+    }
   }
   set_sub_circular_motion_params();
 }
@@ -407,10 +439,11 @@ void process_quadrant_arc(){
 
 
 void set_sub_circular_motion_params(){
-    chord_length = sqrt(pow(prev_x-x,2) + pow(prev_y-y,2));
+    chord_length = sqrt(pow(prev_x-intermediate_x,2) + pow(prev_y-intermediate_y,2));
     theta = (asin(chord_length/(2*radius)))*2;
     arc_length = theta * radius;
     distance = arc_length;
+    Serial.println(theta);
     set_direction();
 }
 
@@ -568,6 +601,10 @@ void loop() {
   }
   if(gcode_sub_indx>prev_gcode_sub_indx){
 
+    //Serial.println(gcode_sub_indx);
+    process_quadrant_arc();
+    prev_gcode_sub_indx = gcode_sub_indx;
+    TCCR1B = (1<<WGM12) | (1<<CS10);
   }
 }
 
