@@ -1,42 +1,40 @@
-// Define pin connections & motor's steps per revolution
-const int dirPin = 55;
-const int stepPin = 54;
-const int enaPin = 38;
-
-const int stepsPerRevolution = 200;
+// Define the pins for the stepper motor (e.g., X-axis pins on RAMPS 1.4)
+#define STEP_PIN 60 // X_STEP_PIN
+#define DIR_PIN 61  // X_DIR_PIN
+#define ENABLE_PIN 56 // X_ENABLE_PIN
 
 void setup() {
-  // Declare pins as Outputs
-  pinMode(stepPin, OUTPUT);
-  pinMode(dirPin, OUTPUT);
-  pinMode(enaPin, OUTPUT);
-  //digitalWrite(enaPin, LOW);
-  
+  // Set pin modes
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(ENABLE_PIN, OUTPUT);
+
+  // Enable the stepper driver (LOW to enable for DRV8825)
+  digitalWrite(ENABLE_PIN, LOW);
+
+  Serial.begin(115200); // Initialize serial communication for debugging
 }
 
 void loop() {
-  // Set motor direction clockwise
-  digitalWrite(dirPin, HIGH);
-
-  // Spin motor slowly
-  for (int x = 0; x < stepsPerRevolution; x++) {
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(40);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(40);
+  // Rotate in one direction
+  digitalWrite(DIR_PIN, HIGH); // Set direction (HIGH or LOW for clockwise/counter-clockwise)
+  Serial.println("Moving in one direction...");
+  for (int i = 0; i < 1600; i++) { // 1600 steps for a common NEMA 17 with 1/16 microstepping
+    digitalWrite(STEP_PIN, HIGH);
+    delayMicroseconds(5); // Adjust delay for speed
+    digitalWrite(STEP_PIN, LOW);
+    delayMicroseconds(5);
   }
-  delay(1000);  // Wait a second
+  delay(1000); // Pause for 1 second
 
-  // Set motor direction counterclockwise
-  /*digitalWrite(dirPin, LOW);
-
-  // Spin motor quickly
-  for (int x = 0; x < stepsPerRevolution; x++) {
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(1000);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(1000);
+  // Rotate in the opposite direction
+  digitalWrite(DIR_PIN, LOW); // Change direction
+  Serial.println("Moving in the opposite direction...");
+  for (int i = 0; i < 1600; i++) {
+    digitalWrite(STEP_PIN, HIGH);
+    delayMicroseconds(500);
+    digitalWrite(STEP_PIN, LOW);
+    delayMicroseconds(500);
   }
-  delay(1000);  // Wait a second
-  */
+  delay(1000); // Pause for 1 second
 }

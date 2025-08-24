@@ -101,7 +101,7 @@ void set_duration(){
   duration = distance/f;
   dY = (y-prev_y);
   dX =  (x-prev_x);
-  slope = (double)(y-prev_y)/(x-prev_x));
+  slope = (double)(y-prev_y)/(x-prev_x);
   Serial.println(slope);
   x_primary=abs(dX)>=abs(dY); 
   p = (2 * dY) -dX;

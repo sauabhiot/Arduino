@@ -12,7 +12,9 @@
 #define clock_prescalar 1
 #define timer_frequency base_frequency/clock_prescalar
 
-#define total_gcodes 3
+#define total_gcodes 1
+
+
 
 double count=0.0;
 long times=0;
@@ -22,11 +24,13 @@ long steps_per_mm = (steps_pre_revolution * microstepping)/(screw_pitch * no_of_
 double mm_per_step = 1.00/(double)steps_per_mm; // 0.000625
 
 volatile double time_increment = 0.0;
-/*
+
+
 char *gcodes[total_gcodes] = {
-  "G01 X0 Y-10 F1000"
+  "G01 X10 Y0 F1000"
 };
-*/
+
+
 /*
  // Anti clockwise 0 - 90
 char *gcodes[total_gcodes] = {
@@ -104,14 +108,14 @@ char *gcodes[total_gcodes] = {
 */
 
 
-
+/*
  // Clockwise circle
 char *gcodes[total_gcodes] = {
-  "G01 X100 Y100 F1000",
-  "G01 X149.9 Y99.9 F1000",
+  "G01 X100 Y100 F500",
+  "G01 X149.9 Y99.9",
   "G02 X149.9 Y100.1 I-49 J1",
 };
-
+*/
 
 /*
 // From 340 to 20 Anti clockwise
@@ -158,7 +162,8 @@ char *gcodes[total_gcodes] = {
   "G01 X0 Y0"
 };
 */
-/*
+
+
 char *gcodes[total_gcodes] = {
 "G01 X0 Y3.269357",
 "G01 X1.564718 Y3.377552",
@@ -264,13 +269,13 @@ char *gcodes[total_gcodes] = {
 "G01 X0 Y3.269357",
 "G01 X0 Y3.269357"
 };
-*/
+
 
 int c=1;
 int gcode_indx = 0 , prev_gcode_indx = 0;
 int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 
-volatile double x=0,y=0,e=0,f=1000;
+volatile double x=0,y=0,e=0,f=500;
 
 volatile double prev_x=0;
 volatile double prev_y=0;
@@ -333,19 +338,26 @@ double q4_y2_limit = 0;
 
 double intermediate_x = 0.0, intermediate_y = 0.0;
 
-void delay_1us_nop() {
+volatile void delay_1us_nop() {
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
+
 }
+
+/*
+ISR(TIMER1_COMPA_vect){
+  step_x();
+}
+*/
 
 
 ISR(TIMER1_COMPA_vect){
   if(travelled>distance){
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
     if(gcode_indx<total_gcodes-1 && end_gcode_sub_indx == gcode_sub_indx) gcode_indx++;
-    Serial.println(travelled,DEC);
+    //Serial.println(travelled,DEC);
     //Serial.println(p_x);
     //Serial.println(p_y,DEC);
     //Serial.println(count2);
@@ -356,12 +368,14 @@ ISR(TIMER1_COMPA_vect){
     ins_y=0.0;
     gcode_step_x = 0.0;
     gcode_step_y = 0.0;
-    PORTB |= (1 << 0);
+    PORTD |= (1 << 7);
+    PORTF |= (1 << 2);
     if(g_code == 2 || g_code == 3) next_quadrant();
   }else{
     //Serial.println(get_direction_x());
     travelled = travelled + mm_per_step;
-    PORTB &= ~(1<<0);  
+    PORTD &= ~(1 << 7);
+    PORTF &= ~(1 << 2);
     if(g_code==1){
       ins_x =  (travelled/formula_denominator);
       ins_y =    ((slope * (ins_x )));
@@ -485,16 +499,23 @@ ISR(TIMER1_COMPA_vect){
   }
 } 
 
+
 void step_x(){
-    PORTD |= (1 << 2);
-    delay_1us_nop();
-    PORTD &= ~(1 << 2);
+  
+    PORTF |= (1 << 0);
+    //for(int i=0;i<400;i++){
+      delay_1us_nop();
+   // }
+    PORTF &= ~(1 << 0);
+   
 }
 
 void step_y(){
-    PORTD |= (1 << 3);
-    delay_1us_nop();
-    PORTD &= ~(1 << 3);
+    PORTF |= (1 << 6);
+    //for(int i=0;i<400;i++){
+      delay_1us_nop();
+   // }
+    PORTF &= ~(1 << 6);
 }
 
 
@@ -664,19 +685,19 @@ void set_target_freq(){
 }
 
 void set_clockwise_for_x(){
-  PORTD |= (1 << 5); //X axis dir
+  PORTF |= (1 << 1);
 }
 
 void set_anti_clockwise_for_x(){
-  PORTD &= ~(1 << 5); //X axis dir
+  PORTF &= ~(1 << 1);
 }
 
 void set_clockwise_for_y(){
-  PORTD |= (1 << 6); //X axis dir
+  PORTF |= (1 << 7); //Y axis dir
 }
 
 void set_anti_clockwise_for_y(){
-  PORTD &= ~(1 << 6); //Y axis dir
+  PORTF &= ~(1 << 7); //Y axis dir
 }
 
 
@@ -770,28 +791,35 @@ void printXY(double c_x, double c_y, double r, double angle){
 
 }
 
+
 void setup() {
   Serial.begin(115200);
-  //delay(1000);
-  DDRD |= (1<<2);  // pin 2 step pin for X axis
-  DDRD |= (1<<5); // pin 5 dir pin for X axis
-
-  DDRD |= (1<<3);  // pin 3 step for Y axis
-  DDRD |= (1<<6); // pin 6 dir for Y axis
-  
-  DDRB |= (1<<0); // pin 8 enable
-  PORTB &= ~(1<<0);  
 
 
-  //DISABLED FOR TESTING, remove to start testing
-  //PORTB |= (1 << 0);
+  // Enable the stepper driver (LOW to enable for DRV8825)
   
+     
+  DDRD |= (1 << 7);   // PIN 38 as output ENABLE Pin of X
+  PORTD &= ~(1 << 7); // ENABLE Pin set to LOW
+
+  DDRF |= (1 << 0);  // PIN 54 as output STEP Pin of X
+  DDRF |= (1 << 1);  // PIN 55 as output DIR pin of X
+
+
+
+  DDRF |= (1 << 2);   // PIN 56 as output ENABLE Pin of Y
+  PORTF &= ~(1 << 2); // ENABLE Pin set to LOW
+
+  DDRF |= (1 << 6);  // PIN 60 as output STEP Pin of Y
+  DDRF |= (1 << 7);  // PIN 61 as output DIR Pin of Y
+
   
+
   TCCR1A = 0;
   TCCR1B = (1<<WGM12) | (1<<CS10);
   TIMSK1=  (1<<OCIE1A);
   parse_gcodes(0);
-  //sei(); 
+  sei(); 
 }
 
 void loop() {
