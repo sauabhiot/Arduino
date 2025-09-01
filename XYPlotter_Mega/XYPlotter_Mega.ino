@@ -4,6 +4,7 @@
 #include <math.h>
 #include <avr/interrupt.h>
 
+#define FAST_MOVE 5000/60
 #define base_frequency 16000000
 #define steps_pre_revolution 200
 #define microstepping 16
@@ -12,9 +13,9 @@
 #define clock_prescalar 1
 #define timer_frequency base_frequency/clock_prescalar
 
-#define total_gcodes 1
+#define total_gcodes 2
 
-
+#define ENABLE_Z_MOTOR_PIN 62 
 
 double count=0.0;
 long times=0;
@@ -25,11 +26,11 @@ double mm_per_step = 1.00/(double)steps_per_mm; // 0.000625
 
 volatile double time_increment = 0.0;
 
-
+/*
 char *gcodes[total_gcodes] = {
-  "G01 X10 Y0 F1000"
+  "G01 X0 Y0 Z100 F1000",
 };
-
+*/
 
 /*
  // Anti clockwise 0 - 90
@@ -103,7 +104,7 @@ char *gcodes[total_gcodes] = {
 char *gcodes[total_gcodes] = {
   "G01 X100 Y100 F1000",
   "G01 X149.9 Y100.1 F1000",
-  "G02 X149.9 Y99.9 I-50 J0",
+  "G03 X149.9 Y99.9 I-50 J0",
 };
 */
 
@@ -153,143 +154,113 @@ char *gcodes[total_gcodes] = {
   "G01 X100 Y100",
 };
 */
+
 /*
  // Square
 char *gcodes[total_gcodes] = {
-  "G01 X50 Y0 F1000",
-  "G01 X50 Y50",
-  "G01 X0 Y50",
-  "G01 X0 Y0"
+  "G01 Y2 X0 F100",
+  "G01 Y2 X2",
+  "G01 Y0 X2",
+  "G01 Y0 X4",
+  "G01 Y2 X4",
+  "G01 Y2 X6", 
+  "G01 Y0 X6", 
+  "G01 Y0 X8", 
+  "G01 Y2 X8",
+  "G01 Y2 X10", 
+  "G01 Y0 X10", 
+  "G01 Y0 X12",
+  "G01 Y2 X12",
+  "G01 Y2 X14", 
+  "G01 Y0 X14", 
+  "G01 Y0 X16",
+  "G01 Y2 X16",
+  "G01 Y2 X18", 
+  "G01 Y0 X18", 
+  "G01 Y0 X20",
 };
 */
 
-
+/*
 char *gcodes[total_gcodes] = {
-"G01 X0 Y3.269357",
-"G01 X1.564718 Y3.377552",
-"G01 X1.671153 Y2.920312",
-"G01 X1.844874 Y2.520463",
-"G01 X2.083436 Y2.179885",
-"G01 X2.405187 Y1.88823",
-"G01 X2.827257 Y1.635149",
-"G01 X3.348422 Y1.423464",
-"G01 X3.944213 Y1.262584",
-"G01 X4.587717 Y1.16662",
-"G01 X5.278933 Y1.134632",
-"G01 X5.888182 Y1.159093",
-"G01 X6.448495 Y1.231537",
-"G01 X6.959872 Y1.353843",
-"G01 X7.403964 Y1.517546",
-"G01 X7.766087 Y1.717942",
-"G01 X8.045021 Y1.954088",
-"G01 X8.241987 Y2.215636",
-"G01 X8.360657 Y2.492238",
-"G01 X8.401028 Y2.782952",
-"G01 X8.361879 Y3.072726",
-"G01 X8.248104 Y3.336156",
-"G01 X8.057256 Y3.575125",
-"G01 X7.778321 Y3.788692",
-"G01 X7.401517 Y3.978738",
-"G01 X6.924395 Y4.144322",
-"G01 X6.449719 Y4.264748",
-"G01 X5.70345 Y4.421865",
-"G01 X4.683142 Y4.616615",
-"G01 X3.643259 Y4.826418",
-"G01 X2.834597 Y5.027754",
-"G01 X2.255934 Y5.220623",
-"G01 X1.707854 Y5.483112",
-"G01 X1.261317 Y5.784175",
-"G01 X0.91632 Y6.123813",
-"G01 X0.670418 Y6.496378",
-"G01 X0.523612 Y6.89905",
-"G01 X0.474676 Y7.329947",
-"G01 X0.534622 Y7.807884",
-"G01 X0.715684 Y8.265124",
-"G01 X1.015415 Y8.700725",
-"G01 X1.431368 Y9.092107",
-"G01 X1.957426 Y9.414809",
-"G01 X2.594813 Y9.669771",
-"G01 X3.31172 Y9.853232 ",
-"G01 X4.081233 Y9.963308",
-"G01 X4.902128 Y10",
-"G01 X5.798875 Y9.961427",
-"G01 X6.620994 Y9.845705",
-"G01 X7.369709 Y9.653778",
-"G01 X8.02667 Y9.385644",
-"G01 X8.57475 Y9.046006",
-"G01 X9.012723 Y8.632985",
-"G01 X9.336923 Y8.164456",
-"G01 X9.542452 Y7.655471",
-"G01 X9.630536 Y7.107913",
-"G01 X8.031564 Y7.01289",
-"G01 X7.877416 Y7.57362",
-"G01 X7.587472 Y8.035563",
-"G01 X7.160509 Y8.396839",
-"G01 X6.586738 Y8.656506",
-"G01 X5.855151 Y8.812682",
-"G01 X4.966969 Y8.864428",
-"G01 X4.050648 Y8.817387",
-"G01 X3.316614 Y8.675323",
-"G01 X2.764864 Y8.439177",
-"G01 X2.380719 Y8.135291",
-"G01 X2.150722 Y7.793772",
-"G01 X2.073648 Y7.412739",
-"G01 X2.128701 Y7.085333",
-"G01 X2.291412 Y6.799323",
-"G01 X2.563005 Y6.554709",
-"G01 X3.056031 Y6.327971",
-"G01 X3.892831 Y6.09841",
-"G01 X5.074627 Y5.864146",
-"G01 X6.285784 Y5.639289",
-"G01 X7.214339 Y5.433249",
-"G01 X7.857842 Y5.247907",
-"G01 X8.525814 Y4.96566",
-"G01 X9.06533 Y4.637313",
-"G01 X9.477612 Y4.263806",
-"G01 X9.767556 Y3.846082",
-"G01 X9.941278 Y3.387901",
-"G01 X10 Y2.890206",
-"G01 X9.936384 Y2.386866",
-"G01 X9.744311 Y1.902343",
-"G01 X9.426229 Y1.438517",
-"G01 X8.987032 Y1.017029",
-"G01 X8.43773 Y0.664221",
-"G01 X7.775875 Y0.378211",
-"G01 X7.029606 Y0.167466",
-"G01 X6.222167 Y0.042337",
-"G01 X5.356007 Y0",
-"G01 X4.280646 Y0.042337",
-"G01 X3.327624 Y0.169348",
-"G01 X2.498165 Y0.381974",
-"G01 X1.784928 Y0.679274",
-"G01 X1.181796 Y1.063129",
-"G01 X0.689993 Y1.5326",
-"G01 X0.321752 Y2.066987",
-"G01 X0.091754 Y2.645592",
-"G01 X0 Y3.269357",
-"G01 X0 Y3.269357"
+"G01 X0 Y30",
+"G01 X12.50029 Y30",
+"G01 X15.10055 Y29.95041",
+"G01 X17.25274 Y29.80749",
+"G01 X18.96037 Y29.5683",
+"G01 X20.93967 Y29.0666",
+"G01 X22.71434 Y28.34905",
+"G01 X24.28437 Y27.42149",
+"G01 X26.03787 Y25.96014",
+"G01 X27.46678 Y24.25085",
+"G01 X28.57815 Y22.29363",
+"G01 X29.36846 Y20.11473",
+"G01 X29.84476 Y17.73748",
+"G01 X30 Y15.16189",
+"G01 X29.89415 Y12.97132",
+"G01 X29.57309 Y10.94993",
+"G01 X29.03681 Y9.103549",
+"G01 X28.33118 Y7.446767",
+"G01 X27.50559 Y5.988333",
+"G01 X26.56004 Y4.736996",
+"G01 X25.52276 Y3.663588",
+"G01 X24.42197 Y2.756442",
+"G01 X23.25414 Y2.015557",
+"G01 X21.97695 Y1.405931",
+"G01 X20.53393 Y0.90423",
+"G01 X18.92509 Y0.510452",
+"G01 X17.14689 Y0.224599",
+"G01 X15.2064 Y0.055421",
+"G01 X13.09303 Y0.00001",
+"G01 X0.00001 Y0.00001",
+"G01 X4.812419 Y3.517745",
+"G01 X12.54969 Y3.517745",
+"G01 X14.76891 Y3.578999",
+"G01 X16.64236 Y3.762761",
+"G01 X18.17359 Y4.071949",
+"G01 X19.44373 Y4.491979",
+"G01 X20.52687 Y5.011182",
+"G01 X21.42655 Y5.629558",
+"G01 X22.47795 Y6.679631",
+"G01 X23.36352 Y7.948469",
+"G01 X24.08327 Y9.433155",
+"G01 X24.61249 Y11.13661",
+"G01 X24.93003 Y13.06758",
+"G01 X25.03587 Y15.22314",
+"G01 X24.82771 Y18.12543",
+"G01 X24.20675 Y20.54059",
+"G01 X23.16947 Y22.47156",
+"G01 X21.83582 Y23.97375",
+"G01 X20.32224 Y25.1055",
+"G01 X18.63225 Y25.86388",
+"G01 X17.08691 Y26.20515",
+"G01 X15.01588 Y26.41225",
+"G01 X12.4262 Y26.47934",
+"G01 X4.812419 Y26.47934",
+"G01 X4.812419 Y3.517745"
 };
-
+*/
 
 int c=1;
 int gcode_indx = 0 , prev_gcode_indx = 0;
 int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 
-volatile double x=0,y=0,e=0,f=500;
+volatile double x=0,y=0,z=0,e=0,f=10;
 
 volatile double prev_x=0;
 volatile double prev_y=0;
-volatile double duration=0;
-volatile double distance=0;
-volatile double travelled=0;;
+volatile double prev_z=0;
+volatile double duration = 0, duration_z = 0;
+volatile double distance = 0, distance_z = 0;
+volatile double travelled=0, travelled_z=0;
 double slope = 0.0;
 double dY = 0.0;
 double dX = 0.0;
 double p = 0.0;
 int x_primary=0;
 
-double ins_x = 0, ins_y = 0;
-double p_x = 0, p_y = 0;
+double ins_x = 0, ins_y = 0, ins_z = 0;
+double p_x = 0, p_y = 0, p_z = 0;
 double gcode_step_x = 0, gcode_step_y = 0;
 
 double formula_denominator;
@@ -346,177 +317,205 @@ volatile void delay_1us_nop() {
 
 }
 
+int only_z_movement(){
+  return (abs(x - prev_x) < mm_per_step && abs(y - prev_y) < mm_per_step);
+}
+
+
 /*
 ISR(TIMER1_COMPA_vect){
-  step_x();
+  step_z();
 }
 */
 
 
 ISR(TIMER1_COMPA_vect){
-  if(travelled>distance){
-    TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
-    if(gcode_indx<total_gcodes-1 && end_gcode_sub_indx == gcode_sub_indx) gcode_indx++;
-    //Serial.println(travelled,DEC);
-    //Serial.println(p_x);
-    //Serial.println(p_y,DEC);
-    //Serial.println(count2);
-    
-    
-    travelled=0.0;
-    ins_x=0.0;
-    ins_y=0.0;
-    gcode_step_x = 0.0;
-    gcode_step_y = 0.0;
-    PORTD |= (1 << 7);
-    PORTF |= (1 << 2);
-    if(g_code == 2 || g_code == 3) next_quadrant();
+  if(only_z_movement()){
+    //Serial.println(distance_z);
+    if(travelled_z > distance_z){
+      TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
+      Serial.println(travelled_z ,DEC);
+      travelled_z = 0.0;
+      ins_z = 0.0;
+      PORTD |= (1 << 7);
+      PORTF |= (1 << 2);
+    }
+    else{
+       travelled_z = travelled_z + mm_per_step;
+       p_z = p_z + mm_per_step;
+       delay_1us_nop();
+       step_z();
+       delay_1us_nop();
+    }
   }else{
-    //Serial.println(get_direction_x());
-    travelled = travelled + mm_per_step;
-    PORTD &= ~(1 << 7);
-    PORTF &= ~(1 << 2);
-    if(g_code==1){
-      ins_x =  (travelled/formula_denominator);
-      ins_y =    ((slope * (ins_x )));
+    if(travelled > distance){
+      TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
+      if(gcode_indx<total_gcodes-1 && end_gcode_sub_indx == gcode_sub_indx) gcode_indx++;
+        Serial.println(travelled,DEC);
+        //Serial.println(p_x);
+        //Serial.println(p_y,DEC);
+        //Serial.println(count2);
+        
+        
+        travelled=0.0;
+        ins_x=0.0;
+        ins_y=0.0;
+        gcode_step_x = 0.0;
+        gcode_step_y = 0.0;
+        PORTD |= (1 << 7);
+        PORTF |= (1 << 2);
+        if(g_code == 2 || g_code == 3) next_quadrant();
     
-      
-      if(abs(ins_x)>mm_per_step){      
-        if(abs(ins_x - gcode_step_x) >= mm_per_step){
-          p_x = p_x + mm_per_step * get_direction_x();
-          gcode_step_x = gcode_step_x + (mm_per_step  * get_direction_x());
-          step_x();
-        }
-      }
-
-    
-      if(abs(ins_y)>mm_per_step){
-        if(abs(ins_y - gcode_step_y) >= mm_per_step){
-          p_y = p_y + mm_per_step*get_direction_y();
-          gcode_step_y = gcode_step_y + (mm_per_step * get_direction_y());
-          step_y();
-        }
-      }
     }else{
-      double arc_theta = travelled/radius;
-      if(current_quadrant == 1) { // X INCREASING Y DECREASING CLOCKWISE 
-        if(clockwise){
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x + cos(theta - arc_theta)*radius;
-            ins_y= arc_center_y + sin(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x + sin(arc_theta)*radius;
-            ins_y= arc_center_y + cos(arc_theta)*radius;
-          }          
-        }else{  // X DECREASING Y INCREASING ANTI CLOCKWISE
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x + sin(theta - arc_theta)*radius;
-            ins_y= arc_center_y + cos(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x + cos(arc_theta)*radius;
-            ins_y= arc_center_y + sin(arc_theta)*radius;
+      //Serial.println(get_direction_x());
+      travelled = travelled + mm_per_step;
+      
+      PORTD &= ~(1 << 7);
+      PORTF &= ~(1 << 2);
+      if(g_code == 1 || g_code == 0){
+        ins_x =  (travelled/formula_denominator);
+        ins_y =    ((slope * (ins_x )));
+      
+        
+        if(abs(ins_x)>mm_per_step){      
+          if(abs(ins_x - gcode_step_x) >= mm_per_step){
+            p_x = p_x + mm_per_step * get_direction_x();
+            gcode_step_x = gcode_step_x + (mm_per_step  * get_direction_x());
+            step_x();
           }
         }
-      }else if(current_quadrant == 2){ // BOTH INCREASING CLOCKWISE
-        if(clockwise){
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x - sin(theta - arc_theta)*radius;
-            ins_y= arc_center_y + cos(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x - cos(arc_theta)*radius;
-            ins_y= arc_center_y + sin(arc_theta)*radius;
-          }
 
-        }else{ // BOTH DECREASING ANTI CLOCKWISE
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x - cos(theta - arc_theta)*radius;
-            ins_y= arc_center_y + sin(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x - sin(arc_theta)*radius;
-            ins_y= arc_center_y + cos(arc_theta)*radius;
+      
+        if(abs(ins_y)>mm_per_step){
+          if(abs(ins_y - gcode_step_y) >= mm_per_step){
+            p_y = p_y + mm_per_step*get_direction_y();
+            gcode_step_y = gcode_step_y + (mm_per_step * get_direction_y());
+            step_y();
           }
         }
-      }else if(current_quadrant == 3) { 
-          if(clockwise){ // X INCREASING  Y DECREASING  CLOCKWISE
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x - cos(theta - arc_theta)*radius;
-              ins_y= arc_center_y - sin(theta - arc_theta)*radius;
-            }else{
-              ins_x= arc_center_x - sin(arc_theta)*radius;
-              ins_y= arc_center_y - cos(arc_theta)*radius;
-            }
-          }else{ // X DECREASING  Y INCREASING ANTI CLOCKWISE
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x - sin(theta - arc_theta)*radius;
-              ins_y= arc_center_y - cos(theta - arc_theta)*radius;
-
-            }else{
-              ins_x= arc_center_x - cos(arc_theta)*radius;
-              ins_y= arc_center_y - sin(arc_theta)*radius;
-            }
-          }
-      }else if(current_quadrant == 4) { 
-          if(clockwise) {// clockwise BOTH DECREASING
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x + sin(theta - arc_theta)*radius;
-              ins_y= arc_center_y - cos(theta - arc_theta)*radius;
-            }else{
-              ins_x= arc_center_x + cos(arc_theta)*radius;
-              ins_y= arc_center_y - sin(arc_theta)*radius;
-            }
-          }else{ // Anti clockwise BOTH INCREASING
+      }else{
+        double arc_theta = travelled/radius;
+        if(current_quadrant == 1) { // X INCREASING Y DECREASING CLOCKWISE 
+          if(clockwise){
             if(current_quadrant == start_quadrant){
               ins_x= arc_center_x + cos(theta - arc_theta)*radius;
-              ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + sin(theta - arc_theta)*radius;
             }else{
               ins_x= arc_center_x + sin(arc_theta)*radius;
-              ins_y= arc_center_y - cos(arc_theta)*radius;
+              ins_y= arc_center_y + cos(arc_theta)*radius;
+            }          
+          }else{  // X DECREASING Y INCREASING ANTI CLOCKWISE
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x + sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + cos(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x + cos(arc_theta)*radius;
+              ins_y= arc_center_y + sin(arc_theta)*radius;
             }
           }
-      }  
-      
-      
-      
-      //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
-      
-      
-      if(abs(abs(ins_x) - abs(p_x)) >= mm_per_step){
-        p_x = p_x + (mm_per_step  * get_direction_x());
-        step_x();
-        
-      }
+        }else if(current_quadrant == 2){ // BOTH INCREASING CLOCKWISE
+          if(clockwise){
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x - sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + cos(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x - cos(arc_theta)*radius;
+              ins_y= arc_center_y + sin(arc_theta)*radius;
+            }
 
-      //step_theta = get_direction_y() > 0 ? (theta-step_theta):step_theta;
-      //ins_y= arc_center_y + sin(arc_theta)*radius;
-      //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
-      if(abs(abs(ins_y) - abs(p_y)) >= mm_per_step){
-        p_y = p_y + (mm_per_step * get_direction_y());
-        step_y();
+          }else{ // BOTH DECREASING ANTI CLOCKWISE
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x - cos(theta - arc_theta)*radius;
+              ins_y= arc_center_y + sin(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x - sin(arc_theta)*radius;
+              ins_y= arc_center_y + cos(arc_theta)*radius;
+            }
+          }
+        }else if(current_quadrant == 3) { 
+            if(clockwise){ // X INCREASING  Y DECREASING  CLOCKWISE
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x - cos(theta - arc_theta)*radius;
+                ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x - sin(arc_theta)*radius;
+                ins_y= arc_center_y - cos(arc_theta)*radius;
+              }
+            }else{ // X DECREASING  Y INCREASING ANTI CLOCKWISE
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x - sin(theta - arc_theta)*radius;
+                ins_y= arc_center_y - cos(theta - arc_theta)*radius;
+
+              }else{
+                ins_x= arc_center_x - cos(arc_theta)*radius;
+                ins_y= arc_center_y - sin(arc_theta)*radius;
+              }
+            }
+        }else if(current_quadrant == 4) { 
+            if(clockwise) {// clockwise BOTH DECREASING
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x + sin(theta - arc_theta)*radius;
+                ins_y= arc_center_y - cos(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x + cos(arc_theta)*radius;
+                ins_y= arc_center_y - sin(arc_theta)*radius;
+              }
+            }else{ // Anti clockwise BOTH INCREASING
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x + cos(theta - arc_theta)*radius;
+                ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x + sin(arc_theta)*radius;
+                ins_y= arc_center_y - cos(arc_theta)*radius;
+              }
+            }
+        }  
+        
+        
+        
+        //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
+        
+        
+        if(abs(abs(ins_x) - abs(p_x)) >= mm_per_step){
+          p_x = p_x + (mm_per_step  * get_direction_x());
+          step_x();
+          
+        }
+
+        //step_theta = get_direction_y() > 0 ? (theta-step_theta):step_theta;
+        //ins_y= arc_center_y + sin(arc_theta)*radius;
+        //Serial.println(abs(abs(ins_y) - abs(p_y)),DEC);
+        if(abs(abs(ins_y) - abs(p_y)) >= mm_per_step){
+          p_y = p_y + (mm_per_step * get_direction_y());
+          step_y();
+          
+        }
         
       }
-      
     }
   }
 } 
 
 
 void step_x(){
-  
     PORTF |= (1 << 0);
-    //for(int i=0;i<400;i++){
-      delay_1us_nop();
-   // }
+    delay_1us_nop();
     PORTF &= ~(1 << 0);
    
 }
 
 void step_y(){
     PORTF |= (1 << 6);
-    //for(int i=0;i<400;i++){
-      delay_1us_nop();
-   // }
+    delay_1us_nop();
     PORTF &= ~(1 << 6);
 }
+
+void step_z(){
+    PORTL |= (1 << 3);
+    delay_1us_nop();
+    PORTL &= ~(1 << 3);
+}
+
 
 
 void set_quadrants(){
@@ -578,16 +577,22 @@ void set_quadrants(){
 
 void set_duration(){
   
-  if(g_code == 1){
+  if(g_code == 1 || g_code == 0){
     double c_x = x - p_x;
     double c_y = y - p_y;
     distance = sqrt((c_x * c_x) + (c_y * c_y));
+    distance_z = abs(z - p_z);
     duration = distance/f;
+    
     dY = (y-prev_y);
     dX =  (x-prev_x)==0?0.0000001:(x-prev_x);
     slope = ((double)dY/dX);
     formula_denominator =sqrt(1+slope*slope);
-    
+    if(only_z_movement()){ // Only Z axis movement
+      duration_z = distance_z/f;
+    }else{
+      distance_z = duration;
+    }
   }else{
     clockwise = (g_code==2) ? 1 : 0;
     arc_center_x = I + prev_x;
@@ -666,7 +671,8 @@ void set_sub_circular_motion_params(){
     theta = (asin(chord_length/(2*radius)))*2;
     arc_length = theta * radius;
     distance = arc_length;
-    Serial.println(theta);
+    //Serial.println("theta: ");
+    //Serial.println(theta);
     set_direction();
 }
 
@@ -698,6 +704,17 @@ void set_clockwise_for_y(){
 
 void set_anti_clockwise_for_y(){
   PORTF &= ~(1 << 7); //Y axis dir
+  
+}
+
+
+void set_clockwise_for_z(){
+  PORTL |= (1 << 1); //Y axis dir
+}
+
+void set_anti_clockwise_for_z(){
+  PORTL &= ~(1 << 1); //Y axis dir
+  
 }
 
 
@@ -712,6 +729,11 @@ void set_direction(){
   }else if((y - p_y) > 0){
     set_clockwise_for_y();
   }
+  if((z-p_z)<0){ 
+    set_anti_clockwise_for_z();
+  }else if((z - p_z) > 0){
+    set_clockwise_for_z();
+  }  
 }
 
 int get_direction_x(){
@@ -759,7 +781,13 @@ void parse_gcodes(int indx){
       case 'Y':
         prev_y=y;
         y=atoi(val);
+        y = (y==0) ? 0.00001 : y;
         break;
+      case 'Z':
+        prev_z=z;
+        z=atoi(val);
+        z = (z==0) ? 0.00001 : z;
+        break;        
       case 'I':
         I=atoi(val);
         break;
@@ -778,6 +806,7 @@ void parse_gcodes(int indx){
   }
 
   //Serial.println(indx);
+  if(g_code == 0) f = FAST_MOVE; 
   set_target_freq();
   set_duration();  
   
@@ -812,6 +841,13 @@ void setup() {
 
   DDRF |= (1 << 6);  // PIN 60 as output STEP Pin of Y
   DDRF |= (1 << 7);  // PIN 61 as output DIR Pin of Y
+
+  pinMode(ENABLE_Z_MOTOR_PIN, OUTPUT);
+  digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
+  
+  DDRL |= (1 << 3);  // PIN 46 as output STEP Pin of Z
+  DDRL |= (1 << 1);  // PIN 48 as output DIR Pin of Z
+
 
   
 

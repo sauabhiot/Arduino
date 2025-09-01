@@ -1,7 +1,16 @@
+
+/*
+X	54	55	38
+Y	60	61	56
+Z	46	48	62
+E0	26	28	24
+E1	36	34	30
+*/
+
 // Define the pins for the stepper motor (e.g., X-axis pins on RAMPS 1.4)
-#define STEP_PIN 60 // X_STEP_PIN
-#define DIR_PIN 61  // X_DIR_PIN
-#define ENABLE_PIN 56 // X_ENABLE_PIN
+#define STEP_PIN 46 // Z_STEP_PIN
+#define DIR_PIN 48  // Z_DIR_PIN
+#define ENABLE_PIN 62 // Z_ENABLE_PIN
 
 void setup() {
   // Set pin modes
@@ -21,9 +30,9 @@ void loop() {
   Serial.println("Moving in one direction...");
   for (int i = 0; i < 1600; i++) { // 1600 steps for a common NEMA 17 with 1/16 microstepping
     digitalWrite(STEP_PIN, HIGH);
-    delayMicroseconds(5); // Adjust delay for speed
+    delayMicroseconds(500); // Adjust delay for speed
     digitalWrite(STEP_PIN, LOW);
-    delayMicroseconds(5);
+    delayMicroseconds(500);
   }
   delay(1000); // Pause for 1 second
 
