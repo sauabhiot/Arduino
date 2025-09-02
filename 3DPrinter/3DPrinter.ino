@@ -27,34 +27,38 @@ ENDSTOP Z-MAX	19
 #define clock_prescalar 1
 #define timer_frequency base_frequency/clock_prescalar
 
+
+
 #define total_gcodes 100
 
 #define ENABLE_Z_MOTOR_PIN 62 
 
 #define GCODE_BUFFER_LENGTH 5
 
-const int chipSelect = 53;
+int ACTUAL_GCODE_BUFFER_LENGTH = 0;
 
-int homing = 0;
+long acc_profile = 40000;
+long current_acc = acc_profile;
+
+
+const int chipSelect = 53;
 
 volatile int previous_batch_gcode_indx = 0;
 
 int is_linear_motion = 1;
 volatile int is_gcode_motion_command = 0 ;
 double count=0.0;
-long times=0;
-double time_elapsed=0.0;
+
 double x_distance_ratio, y_distance_ratio, z_distance_ratio, z_circular_distance_ratio;
 
 long steps_per_mm = (steps_pre_revolution * microstepping)/(screw_pitch * no_of_starts); // (200 *16)/(2*4) = 400
 double mm_per_step = 1.00/(double)steps_per_mm; // 0.000625
 
-volatile double time_increment = 0.0;
 
 File gcode_file;
 int is_gcode_file_closed = 0;
 
-
+//char* gcode_file_name = "sqr_wave.gcd";
 
 char *gcodes[GCODE_BUFFER_LENGTH];
 
@@ -76,34 +80,28 @@ volatile double x=0,y=0,z=0,e=0,f=10;
 volatile double prev_x=0;
 volatile double prev_y=0;
 volatile double prev_z=0;
-volatile double duration = 0, duration_z = 0;
-volatile double distance = 0, distance_z = 0;
-volatile double travelled=0, travelled_x = 0, travelled_y = 0,travelled_z=0;
-double slope = 0.0;
-double dY = 0.0;
-double dX = 0.0;
-double p = 0.0;
-int x_primary=0;
 
-double ins_x = 0, ins_y = 0, ins_z = 0;
+volatile double duration = 0;
+volatile double distance = 0;
+volatile double travelled=0, travelled_x = 0, travelled_y = 0,travelled_z=0;
+
+
+double p = 0.0;
+
+double ins_x = 0, ins_y = 0;
 double p_x = 0, p_y = 0, p_z = 0;
 double delta_x = 0.0, delta_y = 0.0, delta_z = 0.0;
-double gcode_step_x = 0, gcode_step_y = 0;
 
-double formula_denominator;
+
 int g_code=1;
 
-double chord_length=0.0;
-double arc_length=0.0;
+
 double radius=0.0;
 double I=0.0,J=0.0;
 double arc_center_x=0;
 double arc_center_y=0;
 double theta;
-int x_previouse=0;
-int y_previous=0;
 
-long count2=0;
 
 int current_quadrant = 1, start_quadrant = 0, end_quadrant = 0;
 
@@ -144,18 +142,20 @@ volatile void delay_1us_nop() {
 
 }
 
+int disable_z_axis = 1;
+int disable_homing = 1;
+
 
 ISR(TIMER1_COMPA_vect){
-   
+  // Z AXIS is CURRENTLY DISABLED
+  if(disable_z_axis) digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
+  
   if(travelled > distance){
     if(end_gcode_sub_indx == gcode_sub_indx) {
-      
       gcode_indx++;
-      //Serial.println(gcode_indx);
-      //process_next_gcode = 1;
     }
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
-    //Serial.println(travelled,DEC);
+    Serial.println(travelled,DEC);
     //Serial.println(p_x,DEC);
     //Serial.println(p_y,DEC);
     //Serial.println(p_z,DEC);
@@ -166,127 +166,131 @@ ISR(TIMER1_COMPA_vect){
     PORTD |= (1 << 7);
     PORTF |= (1 << 2);
     digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
-   
     if(!is_linear_motion) next_quadrant();
   }else{
-    travelled = travelled + mm_per_step;
-    PORTD &= ~(1 << 7);
-    PORTF &= ~(1 << 2);
-    //Serial.println("called..");
-    if(is_linear_motion){
-      digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
-      delta_x = (travelled * x_distance_ratio) - travelled_x;
-      delta_y = (travelled * y_distance_ratio) - travelled_y;
-      delta_z = (travelled * z_distance_ratio) - travelled_z;
+    if(current_acc % 2 == 0 || current_acc == 1){
 
-      if(abs(delta_x) > mm_per_step){
-        p_x = p_x + mm_per_step * get_direction_x();
-        travelled_x = travelled_x + mm_per_step;
-        step_x();
-      }
-      if(abs(delta_y) > mm_per_step){
-        p_y = p_y + mm_per_step * get_direction_y();
-        travelled_y = travelled_y + mm_per_step;
-        step_y();
-      }
-      if(abs(delta_z) > mm_per_step){
-        p_z = p_z + mm_per_step * get_direction_z();
-        travelled_z = travelled_z + mm_per_step;
-        step_z();
-      }
-    }else{
-      double arc_theta = travelled/radius;
-      if(current_quadrant == 1) { // X INCREASING Y DECREASING CLOCKWISE 
-        if(clockwise){
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x + cos(theta - arc_theta)*radius;
-            ins_y= arc_center_y + sin(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x + sin(arc_theta)*radius;
-            ins_y= arc_center_y + cos(arc_theta)*radius;
-          }          
-        }else{  // X DECREASING Y INCREASING ANTI CLOCKWISE
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x + sin(theta - arc_theta)*radius;
-            ins_y= arc_center_y + cos(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x + cos(arc_theta)*radius;
-            ins_y= arc_center_y + sin(arc_theta)*radius;
-          }
+      travelled = travelled + mm_per_step;
+      PORTD &= ~(1 << 7);
+      PORTF &= ~(1 << 2);
+      if(is_linear_motion){
+        if(!disable_z_axis) digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
+        delta_x = (travelled * x_distance_ratio) - travelled_x;
+        delta_y = (travelled * y_distance_ratio) - travelled_y;
+        delta_z = (travelled * z_distance_ratio) - travelled_z;
+
+        if(abs(delta_x) > mm_per_step){
+          p_x = p_x + mm_per_step * get_direction_x();
+          travelled_x = travelled_x + mm_per_step;
+          step_x();
         }
-      }else if(current_quadrant == 2){ // BOTH INCREASING CLOCKWISE
-        if(clockwise){
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x - sin(theta - arc_theta)*radius;
-            ins_y= arc_center_y + cos(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x - cos(arc_theta)*radius;
-            ins_y= arc_center_y + sin(arc_theta)*radius;
-          }
-
-        }else{ // BOTH DECREASING ANTI CLOCKWISE
-          if(current_quadrant == start_quadrant){
-            ins_x= arc_center_x - cos(theta - arc_theta)*radius;
-            ins_y= arc_center_y + sin(theta - arc_theta)*radius;
-          }else{
-            ins_x= arc_center_x - sin(arc_theta)*radius;
-            ins_y= arc_center_y + cos(arc_theta)*radius;
-          }
+        if(abs(delta_y) > mm_per_step){
+          p_y = p_y + mm_per_step * get_direction_y();
+          travelled_y = travelled_y + mm_per_step;
+          step_y();
         }
-      }else if(current_quadrant == 3) { 
-          if(clockwise){ // X INCREASING  Y DECREASING  CLOCKWISE
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x - cos(theta - arc_theta)*radius;
-              ins_y= arc_center_y - sin(theta - arc_theta)*radius;
-            }else{
-              ins_x= arc_center_x - sin(arc_theta)*radius;
-              ins_y= arc_center_y - cos(arc_theta)*radius;
-            }
-          }else{ // X DECREASING  Y INCREASING ANTI CLOCKWISE
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x - sin(theta - arc_theta)*radius;
-              ins_y= arc_center_y - cos(theta - arc_theta)*radius;
-
-            }else{
-              ins_x= arc_center_x - cos(arc_theta)*radius;
-              ins_y= arc_center_y - sin(arc_theta)*radius;
-            }
-          }
-      }else if(current_quadrant == 4) { 
-          if(clockwise) {// clockwise BOTH DECREASING
-            if(current_quadrant == start_quadrant){
-              ins_x= arc_center_x + sin(theta - arc_theta)*radius;
-              ins_y= arc_center_y - cos(theta - arc_theta)*radius;
-            }else{
-              ins_x= arc_center_x + cos(arc_theta)*radius;
-              ins_y= arc_center_y - sin(arc_theta)*radius;
-            }
-          }else{ // Anti clockwise BOTH INCREASING
+        if(abs(delta_z) > mm_per_step){
+          p_z = p_z + mm_per_step * get_direction_z();
+          travelled_z = travelled_z + mm_per_step;
+          step_z();
+        }
+      }else{
+        double arc_theta = travelled/radius;
+        if(current_quadrant == 1) { // X INCREASING Y DECREASING CLOCKWISE 
+          if(clockwise){
             if(current_quadrant == start_quadrant){
               ins_x= arc_center_x + cos(theta - arc_theta)*radius;
-              ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + sin(theta - arc_theta)*radius;
             }else{
               ins_x= arc_center_x + sin(arc_theta)*radius;
-              ins_y= arc_center_y - cos(arc_theta)*radius;
+              ins_y= arc_center_y + cos(arc_theta)*radius;
+            }          
+          }else{  // X DECREASING Y INCREASING ANTI CLOCKWISE
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x + sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + cos(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x + cos(arc_theta)*radius;
+              ins_y= arc_center_y + sin(arc_theta)*radius;
             }
           }
-      }  
-      if(abs(abs(ins_x) - abs(p_x)) >= mm_per_step){
-        p_x = p_x + (mm_per_step  * get_direction_x());
-        step_x();
-        
+        }else if(current_quadrant == 2){ // BOTH INCREASING CLOCKWISE
+          if(clockwise){
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x - sin(theta - arc_theta)*radius;
+              ins_y= arc_center_y + cos(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x - cos(arc_theta)*radius;
+              ins_y= arc_center_y + sin(arc_theta)*radius;
+            }
+
+          }else{ // BOTH DECREASING ANTI CLOCKWISE
+            if(current_quadrant == start_quadrant){
+              ins_x= arc_center_x - cos(theta - arc_theta)*radius;
+              ins_y= arc_center_y + sin(theta - arc_theta)*radius;
+            }else{
+              ins_x= arc_center_x - sin(arc_theta)*radius;
+              ins_y= arc_center_y + cos(arc_theta)*radius;
+            }
+          }
+        }else if(current_quadrant == 3) { 
+            if(clockwise){ // X INCREASING  Y DECREASING  CLOCKWISE
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x - cos(theta - arc_theta)*radius;
+                ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x - sin(arc_theta)*radius;
+                ins_y= arc_center_y - cos(arc_theta)*radius;
+              }
+            }else{ // X DECREASING  Y INCREASING ANTI CLOCKWISE
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x - sin(theta - arc_theta)*radius;
+                ins_y= arc_center_y - cos(theta - arc_theta)*radius;
+
+              }else{
+                ins_x= arc_center_x - cos(arc_theta)*radius;
+                ins_y= arc_center_y - sin(arc_theta)*radius;
+              }
+            }
+        }else if(current_quadrant == 4) { 
+            if(clockwise) {// clockwise BOTH DECREASING
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x + sin(theta - arc_theta)*radius;
+                ins_y= arc_center_y - cos(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x + cos(arc_theta)*radius;
+                ins_y= arc_center_y - sin(arc_theta)*radius;
+              }
+            }else{ // Anti clockwise BOTH INCREASING
+              if(current_quadrant == start_quadrant){
+                ins_x= arc_center_x + cos(theta - arc_theta)*radius;
+                ins_y= arc_center_y - sin(theta - arc_theta)*radius;
+              }else{
+                ins_x= arc_center_x + sin(arc_theta)*radius;
+                ins_y= arc_center_y - cos(arc_theta)*radius;
+              }
+            }
+        }  
+        if(abs(abs(ins_x) - abs(p_x)) >= mm_per_step){
+          p_x = p_x + (mm_per_step  * get_direction_x());
+          step_x();
+          
+        }
+        if(abs(abs(ins_y) - abs(p_y)) >= mm_per_step){
+          p_y = p_y + (mm_per_step * get_direction_y());
+          step_y();
+          
+        }
+        delta_z = (travelled * z_circular_distance_ratio) - travelled_z;
+        if(abs(delta_z) > mm_per_step){
+          p_z = p_z + mm_per_step * get_direction_z();
+          travelled_z = travelled_z + mm_per_step;
+          step_z();
+        }
       }
-      if(abs(abs(ins_y) - abs(p_y)) >= mm_per_step){
-        p_y = p_y + (mm_per_step * get_direction_y());
-        step_y();
-        
-      }
-      delta_z = (travelled * z_circular_distance_ratio) - travelled_z;
-      if(abs(delta_z) > mm_per_step){
-        p_z = p_z + mm_per_step * get_direction_z();
-        travelled_z = travelled_z + mm_per_step;
-        step_z();
-      }
+    }
+    if(current_acc > 1){
+      current_acc--;
     }
   }
 }
@@ -365,8 +369,6 @@ void set_quadrants(){
   int end_indx = end_quadrant;
   end_gcode_sub_indx = (end_indx - start_indx) ;
   current_quadrant = start_quadrant;
-  //Serial.println(start_quadrant);
-  //Serial.println(end_quadrant);
 }
 
 
@@ -404,7 +406,6 @@ void set_intermediate_coordinates(){
 }
 
 void process_quadrant_arc(){
- 
   if((current_quadrant == start_quadrant) && (current_quadrant == end_quadrant)){
     //intermediate_x = x;
     //intermediate_y = y;
@@ -430,16 +431,10 @@ void process_quadrant_arc(){
 
 
 void set_sub_circular_motion_params(){
-  
-    chord_length = sqrt(pow(prev_x-x,2) + pow(prev_y-y,2));
-    
+    double chord_length = sqrt(pow(prev_x-x,2) + pow(prev_y-y,2));
     theta = (asin(chord_length/(2*radius)))*2;
-    arc_length = theta * radius;
+    double arc_length = theta * radius;
     distance = arc_length;
-    //Serial.println("theta: ");
-    //Serial.println(theta);
-    //Serial.println(distance);
-    
     set_direction();
 }
 
@@ -458,7 +453,6 @@ void set_clockwise_for_y(){
 
 void set_anti_clockwise_for_y(){
   PORTF &= ~(1 << 7); //Y axis dir
-  
 }
 
 
@@ -468,15 +462,15 @@ void set_clockwise_for_z(){
 
 void set_anti_clockwise_for_z(){
   PORTL &= ~(1 << 1); //Y axis dir
-  
 }
 
 
 void set_direction(){
   if((x - p_x) < 0){ 
-    set_anti_clockwise_for_x();
-  }else if((x - p_x) > 0){
     set_clockwise_for_x();
+  }else if((x - p_x) > 0){
+    set_anti_clockwise_for_x();
+    
   }
   if((y-p_y)<0){ 
     set_anti_clockwise_for_y();
@@ -531,11 +525,7 @@ void pre_process(){
   if(is_linear_motion){
     double x_diff = abs(x - p_x);
     double y_diff = abs(y - p_y);
-    
-
     distance = sqrt((x_diff * x_diff) + (y_diff * y_diff) + (z_diff * z_diff));
-    
-  
     x_distance_ratio = x_diff/distance;
     y_distance_ratio = y_diff/distance;
     z_distance_ratio = z_diff/distance;
@@ -562,10 +552,8 @@ void pre_process(){
     double arc_distance = radius * theta_diff;
     
     z_circular_distance_ratio = z_diff/arc_distance;
-    //Serial.println(z_circular_distance_ratio,DEC);
     set_quadrants();
     process_quadrant_arc();    
-     
   }
   set_direction();
   unsigned char sreg;
@@ -575,12 +563,10 @@ void pre_process(){
   SREG = sreg;
   TCCR1B = (1<<WGM12) | (1<<CS10);
   sei();
- 
 }
 
 void set_gcode_modes(){
   is_gcode_motion_command = 0;
-  
   switch(g_code){
     case 0:
       f = FAST_MOVE;
@@ -596,7 +582,6 @@ void set_gcode_modes(){
       is_gcode_motion_command = 1;
       clockwise = 1;
       break;
-
     case 3:
       is_linear_motion = 0;  
       is_gcode_motion_command = 1;
@@ -608,7 +593,7 @@ void set_gcode_modes(){
 
 void parse_gcodes(){
   char temp_string[500];
-  Serial.println(gcode_indx);
+  
   strcpy(temp_string, gcodes[gcode_indx-previous_batch_gcode_indx]);
   char *token;
   const char *delimiter = " ";
@@ -620,7 +605,6 @@ void parse_gcodes(){
     switch(type){
       case 'G':
         g_code=atoi(val);
-        //Serial.println(g_code);
         set_gcode_modes();
         break;
       case 'X':
@@ -654,12 +638,8 @@ void parse_gcodes(){
   }
   if(is_gcode_motion_command) { 
     pre_process();
-    
   } else {
-    //Serial.println(gcode_indx);
     gcode_indx++;
-    
-    //process_next_gcode= 1;
   }
 }
 
@@ -667,10 +647,13 @@ void parse_gcodes(){
 int readNextNLines(){
   int lines= 0;
   int batch_read = 0;
-  //Serial.println("called");
   if(gcode_file.available()){
     for(int i=0;i<GCODE_BUFFER_LENGTH;i++){
       String line = gcode_file.readStringUntil('\n');
+      if(line == "") {
+        break;
+      }
+      ACTUAL_GCODE_BUFFER_LENGTH = i;
       int len = line.length() + 1;
       char gcode_ary [len];
       line.toCharArray(gcode_ary, len);
@@ -678,8 +661,6 @@ int readNextNLines(){
       gcodes[i] = malloc(len);
       strcpy(gcodes[i], gcode_ary);
       //Serial.println(line);
-      //Serial.println(gcode_indx);
-      
     }
     batch_read = 1;
   }else{
@@ -706,7 +687,6 @@ void home(){
     set_anti_clockwise_for_x();
     step_x();
     delayMicroseconds(100);
-    //Serial.println(k);
     if(k>5000) break;
   }
   PORTD |= (1 << 7);
@@ -722,7 +702,6 @@ void home(){
     set_anti_clockwise_for_y();
     step_y();
     delayMicroseconds(100);
-    //Serial.println(k);
     if(k>5000) break;
   }
   PORTF |= (1 << 2);
@@ -739,7 +718,7 @@ void setup() {
   }
   Serial.println("SD Card initialized..");
   // Enable the stepper driver (LOW to enable for DRV8825)
-  gcode_file = SD.open("s_gcode.gcd");
+  gcode_file = SD.open("st.gcd");
   
   DDRD |= (1 << 7);   // PIN 38 as output ENABLE Pin of X
   PORTD &= ~(1 << 7); // ENABLE Pin set to LOW
@@ -764,15 +743,12 @@ void setup() {
   DDRE &= ~(1 << 5); // Pin 3 for X Min Endstop
   DDRJ &= ~(1 << 0); // Pin 14 for Y Min Endstop
   
-  //pinMode(14,INPUT_PULLUP);
 
   TCCR1A = 0;
-  //TCCR1B = (1<<WGM12) | (1<<CS10);
-  home();
-  TIMSK1=  (1<<OCIE1A);
+  if(!disable_homing) home();
   readNextNLines();
   parse_gcodes();
-  //sei(); 
+  TIMSK1=  (1<<OCIE1A);
 }
 
 void check_end_stops(){
@@ -787,29 +763,16 @@ void check_end_stops(){
 
 void loop() {
 
-  if((gcode_indx - previous_batch_gcode_indx)<GCODE_BUFFER_LENGTH){
+  if((gcode_indx - previous_batch_gcode_indx)<=ACTUAL_GCODE_BUFFER_LENGTH){
     if(gcode_indx>prev_gcode_indx){
-    //process_next_gcode = 0;
-        //Serial.println(gcode_indx);
-     //Serial.println(prev_gcode_indx);
      prev_gcode_indx = gcode_indx;
      parse_gcodes();
-    //Serial.println(gcode_indx);
-    
-    //Serial.println(gcode_indx);
-     //Serial.println(prev_gcode_indx);
-   // TCCR1B = (1<<WGM12) | (1<<CS10);
     }
   }else{
     int x = readNextNLines();
-    //Serial.println(gcode_indx);
-    //Serial.println(previous_batch_gcode_indx);
-    //Serial.println(x);
     if(x){
       previous_batch_gcode_indx = gcode_indx;
     }
-    //Serial.println(gcode_indx);
-    //Serial.println(previous_batch_gcode_indx);
   }
   /*
   if(gcode_indx>prev_gcode_indx){
@@ -818,17 +781,16 @@ void loop() {
 
     TCCR1B = (1<<WGM12) | (1<<CS10);
   }
-  
+  */
   if(gcode_sub_indx>prev_gcode_sub_indx){
     //Serial.println(gcode_sub_indx);
     process_quadrant_arc();
     prev_gcode_sub_indx = gcode_sub_indx;
     TCCR1B = (1<<WGM12) | (1<<CS10);
   }
-*/
 
-check_end_stops();
 
+  check_end_stops();
 }
 
 
