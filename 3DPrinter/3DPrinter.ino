@@ -27,18 +27,13 @@ ENDSTOP Z-MAX	19
 #define clock_prescalar 1
 #define timer_frequency base_frequency/clock_prescalar
 
-
-
 #define total_gcodes 100
-
 #define ENABLE_Z_MOTOR_PIN 62 
-
 #define GCODE_BUFFER_LENGTH 5
+#define  ACC_PROFILE 1000
 
 int ACTUAL_GCODE_BUFFER_LENGTH = 0;
 
-long acc_profile = 40000;
-long current_acc = acc_profile;
 
 
 const int chipSelect = 53;
@@ -52,7 +47,7 @@ double count=0.0;
 double x_distance_ratio, y_distance_ratio, z_distance_ratio, z_circular_distance_ratio;
 
 long steps_per_mm = (steps_pre_revolution * microstepping)/(screw_pitch * no_of_starts); // (200 *16)/(2*4) = 400
-double mm_per_step = 1.00/(double)steps_per_mm; // 0.000625
+double mm_per_step = 1.00/(double)steps_per_mm; // 0.0025
 
 
 File gcode_file;
@@ -62,27 +57,24 @@ int is_gcode_file_closed = 0;
 
 char *gcodes[GCODE_BUFFER_LENGTH];
 
-
-/*
-char *gcodes[total_gcodes] = {
-  "G01 X100 Y100 F500",
-  "G01 X149.9 Y99.9",
-  "G02 X149.9 Y100.1 Z1 I-49 J1",
-};
-*/
-
 int c=1;
 int gcode_indx = 0 , prev_gcode_indx = 0;
 int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 
-volatile double x=0,y=0,z=0,e=0,f=10;
+volatile double x=0,y=0,z=0,e=0,f=2;
 
 volatile double prev_x=0;
 volatile double prev_y=0;
 volatile double prev_z=0;
 
-volatile double duration = 0;
+
 volatile double distance = 0;
+long total_distance_in_steps = 0;
+long constant_velocity_distance_in_steps = 0;
+long deceleration_start_step=0;
+long current_step_count =0;
+double expected_deceleration_distance = 0;
+double expected_distance = 0;
 volatile double travelled=0, travelled_x = 0, travelled_y = 0,travelled_z=0;
 
 
@@ -102,6 +94,7 @@ double arc_center_x=0;
 double arc_center_y=0;
 double theta;
 
+long gcode_counter = 0;
 
 int current_quadrant = 1, start_quadrant = 0, end_quadrant = 0;
 
@@ -145,6 +138,44 @@ volatile void delay_1us_nop() {
 int disable_z_axis = 1;
 int disable_homing = 1;
 
+int accel_steps = 0;
+int current_accel_step = 0;
+double time_increment = 0.0;
+
+
+int skip(){
+  if(!is_linear_motion) return 0; 
+  if(accel_steps>=0){
+    accel_steps--;
+    current_accel_step++;
+    double time = (time_increment * current_accel_step);
+    double expected_velocity = ACC_PROFILE * time;
+    expected_distance = expected_distance + (expected_velocity * time_increment);
+    return ((travelled + mm_per_step) > expected_distance);
+  }else if(current_step_count>deceleration_start_step){
+    double time = time_increment * (current_step_count-deceleration_start_step);
+    double expected_velocity = f-(ACC_PROFILE * time);
+    expected_deceleration_distance = expected_deceleration_distance + (expected_velocity * time_increment);
+    double actual_deceleration_distance = mm_per_step * (current_step_count-deceleration_start_step);
+    /*
+    Serial.print(expected_deceleration_distance,DEC);
+    Serial.print("---");
+    Serial.print(actual_deceleration_distance,DEC);
+    Serial.print("---");
+    Serial.print((actual_deceleration_distance - expected_deceleration_distance)>mm_per_step);
+    Serial.print("---");
+    Serial.print(travelled);
+    Serial.print("---");
+    Serial.print(distance);
+    Serial.print("---");
+    Serial.println(deceleration_steps++);
+    */
+    return (actual_deceleration_distance - expected_deceleration_distance)>mm_per_step;
+  }
+
+  return 0;
+}
+
 
 ISR(TIMER1_COMPA_vect){
   // Z AXIS is CURRENTLY DISABLED
@@ -155,7 +186,9 @@ ISR(TIMER1_COMPA_vect){
       gcode_indx++;
     }
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
-    Serial.println(travelled,DEC);
+    if(gcode_counter%1000 ==0)
+      Serial.println(gcode_counter);
+    //Serial.println(travelled,DEC);
     //Serial.println(p_x,DEC);
     //Serial.println(p_y,DEC);
     //Serial.println(p_z,DEC);
@@ -163,13 +196,14 @@ ISR(TIMER1_COMPA_vect){
     travelled_x = 0.0;
     travelled_y = 0.0;
     travelled_z = 0.0;
+    current_step_count = 0;
     PORTD |= (1 << 7);
     PORTF |= (1 << 2);
+    gcode_counter++;
     digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
     if(!is_linear_motion) next_quadrant();
   }else{
-    if(current_acc % 2 == 0 || current_acc == 1){
-
+    if(!skip()){
       travelled = travelled + mm_per_step;
       PORTD &= ~(1 << 7);
       PORTF &= ~(1 << 2);
@@ -178,7 +212,7 @@ ISR(TIMER1_COMPA_vect){
         delta_x = (travelled * x_distance_ratio) - travelled_x;
         delta_y = (travelled * y_distance_ratio) - travelled_y;
         delta_z = (travelled * z_distance_ratio) - travelled_z;
-
+        current_step_count++;
         if(abs(delta_x) > mm_per_step){
           p_x = p_x + mm_per_step * get_direction_x();
           travelled_x = travelled_x + mm_per_step;
@@ -288,9 +322,11 @@ ISR(TIMER1_COMPA_vect){
           step_z();
         }
       }
-    }
-    if(current_acc > 1){
-      current_acc--;
+    }else{
+      // Keep steppermotors disabled during skip phase
+      PORTD |= (1 << 7);
+      PORTF |= (1 << 2);
+      digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
     }
   }
 }
@@ -519,13 +555,18 @@ int get_direction_z(){
 void pre_process(){
     double steps_per_sec = steps_per_mm * f; // conversion of feedrate which is Speed of mm/sec to Speed in steps/sec
     count =  round(timer_frequency/(steps_per_sec)) - 1;
-    duration = (count * 1/timer_frequency);
+    time_increment = count/timer_frequency;
+    double transition_duration = f/ACC_PROFILE;
+    accel_steps = round(transition_duration * f * steps_per_mm);
     double z_diff = abs(z - p_z);
 
   if(is_linear_motion){
     double x_diff = abs(x - p_x);
     double y_diff = abs(y - p_y);
     distance = sqrt((x_diff * x_diff) + (y_diff * y_diff) + (z_diff * z_diff));
+    total_distance_in_steps = round(distance * steps_per_mm);
+    constant_velocity_distance_in_steps = total_distance_in_steps -(2 * accel_steps); 
+    deceleration_start_step = accel_steps + constant_velocity_distance_in_steps;
     x_distance_ratio = x_diff/distance;
     y_distance_ratio = y_diff/distance;
     z_distance_ratio = z_diff/distance;
@@ -555,6 +596,7 @@ void pre_process(){
     set_quadrants();
     process_quadrant_arc();    
   }
+
   set_direction();
   unsigned char sreg;
   sreg = SREG;
@@ -605,6 +647,7 @@ void parse_gcodes(){
     switch(type){
       case 'G':
         g_code=atoi(val);
+        
         set_gcode_modes();
         break;
       case 'X':
@@ -614,7 +657,9 @@ void parse_gcodes(){
       case 'Y':
         prev_y=y;
         y=atoi(val);
+        
         y = (y==0) ? 0.00001 : y;
+        
         break;
       case 'Z':
         prev_z=z;
@@ -632,11 +677,12 @@ void parse_gcodes(){
         break;
       case 'F':
         f=atoi(val)/60;
-        break;
+         break;
     }
     token = strtok(NULL, delimiter); // Get the next token
   }
   if(is_gcode_motion_command) { 
+    
     pre_process();
   } else {
     gcode_indx++;
@@ -718,7 +764,7 @@ void setup() {
   }
   Serial.println("SD Card initialized..");
   // Enable the stepper driver (LOW to enable for DRV8825)
-  gcode_file = SD.open("st.gcd");
+  gcode_file = SD.open("plane.gcd");
   
   DDRD |= (1 << 7);   // PIN 38 as output ENABLE Pin of X
   PORTD &= ~(1 << 7); // ENABLE Pin set to LOW
@@ -790,7 +836,7 @@ void loop() {
   }
 
 
-  check_end_stops();
+  //check_end_stops();
 }
 
 
