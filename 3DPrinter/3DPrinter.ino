@@ -71,7 +71,14 @@ double mm_per_step_extruder = mm_per_step * (21.0/5.0);
 
 File gcode_file;
 int is_gcode_file_closed = 0;
-int is_hotend_temperature_reached_stable=0;
+
+int proportional = 0;
+int integral = 0;
+int derivative = 0;
+int pid = 0;
+int accumulated_temp_error = 0;
+int prev_temp_error = 0;
+
 
 //char* gcode_file_name = "sqr_wave.gcd";
 char *gcodes[GCODE_BUFFER_LENGTH];
@@ -224,6 +231,47 @@ int skip(){
   }
 
   return 0;
+}
+
+//ISR(TIMER2_OVF_vect){
+void  maintain_temperature(){
+  float kP = 1;
+  float kI = 0.05;
+  float kD = 20;
+
+  float temp = read_temperature();
+  float err = target_hotend_temp - temp;
+
+  if(part_cooling_fan_speed < 0){
+    if(err<0) 
+      OCR2B = 255;
+    else
+      OCR2B = 0;
+  } else{
+    OCR2B = part_cooling_fan_speed;
+  }
+
+  proportional = (kP * err);
+  proportional = (proportional<204) ? proportional : 178;
+
+  
+  integral = (kI * accumulated_temp_error);
+  if((integral<=51  && integral>=0) || (integral>=51 && err<=0) || (integral<=0 && err>=0)){
+    accumulated_temp_error += err;
+  }
+
+  derivative = kD * (err - prev_temp_error);
+  derivative = (derivative < 25) ? derivative : 25;
+
+  pid = (proportional + integral + derivative);
+  if(pid < 0) pid = 0;
+  if(pid > 255) pid = 255;
+
+
+  OCR2A = pid;
+  temp_tolerance_count = abs(temp-target_hotend_temp) < TEMP_TOLERANCE ? temp_tolerance_count > -50 ? (temp_tolerance_count - 1):temp_tolerance_count : 50;
+  
+  prev_temp_error = err;
 }
 
 
@@ -867,12 +915,14 @@ void parse_gcodes(){
     Serial.println(feed_rate);
     
   }else if(g_code == 109){
-    while(target_hotend_temp >0 && !is_hotend_temperature_reached_stable){
-      maintain_temperaure();
-      delay_1us_nop();
+    //TIMSK2 |= (1 << TOIE2); 
+    while(target_hotend_temp >0 && temp_tolerance_count > 0){
+      maintain_temperature();
+     // delay_1us_nop();
     }
     Serial.print("Hotend Temp: ");
     Serial.println(read_temperature());
+   
     gcode_indx++;
   }else {
     gcode_indx++;
@@ -981,11 +1031,12 @@ double read_temperature(){
   float thermistor_resistance = (SERIES_RESISTOR * v_out) / (VCC - v_out);
   float temp_kelvin = 1.0 / ( (1.0 / (NOMINAL_TEMPERATURE + 273.15)) + (log(thermistor_resistance / NOMINAL_RESISTANCE) / B_PARAMETER) );
   double curr_temp = (temp_kelvin-273.15);
-  Serial.println(curr_temp);
-  return curr_temp; 
-  //return 200.00;
+  //Serial.println(curr_temp);
+  //return curr_temp; 
+  return 200.00;
 }
 
+/*
 void maintain_temperaure(){
   float temp = read_temperature();
   float diff = target_hotend_temp - temp;
@@ -1019,7 +1070,7 @@ void maintain_temperaure(){
     is_hotend_temperature_reached_stable = 0;
   }
 }
-
+*/
 void setup() {
   Serial.begin(9600);
   while (!Serial);
@@ -1131,12 +1182,7 @@ void manage_circular_motion(){
 }
 
 void loop() {
-  //PORTA &= ~(1 << 2); // ENABLE Pin set to LOW
-  //step_e();
-  //delay(10);
-  //Serial.println("stepping e");
-  //Serial.println(digitalRead(ENABLE_Z_MOTOR_PIN));
-  maintain_temperaure();
+  maintain_temperature();
   if((gcode_indx - previous_batch_gcode_indx)<=ACTUAL_GCODE_BUFFER_LENGTH){
     if(gcode_indx>prev_gcode_indx){
      prev_gcode_indx = gcode_indx;
