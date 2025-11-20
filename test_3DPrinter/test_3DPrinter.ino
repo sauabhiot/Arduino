@@ -1,49 +1,54 @@
+#include <SD.h>
+#define CHIP_SELECT_PIN 53
+#define RING_BUFFER_SIZE 64
+#define COMMAND_SIZE 128
 
-/*
-X	54	55	38
-Y	60	61	56
-Z	46	48	62
-E0	26	28	24
-E1	36	34	30
-*/
+File gcode_file;
+char ring_buffer[RING_BUFFER_SIZE][COMMAND_SIZE];
+char command [COMMAND_SIZE];
 
-// Define the pins for the stepper motor (e.g., X-axis pins on RAMPS 1.4)
-#define STEP_PIN 46 // Z_STEP_PIN
-#define DIR_PIN 48  // Z_DIR_PIN
-#define ENABLE_PIN 62 // Z_ENABLE_PIN
 
 void setup() {
-  // Set pin modes
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(ENABLE_PIN, OUTPUT);
+  Serial.begin(115200);
+  while (!Serial);
+  if (!SD.begin(CHIP_SELECT_PIN)) {
+    Serial.println("SD Card initialization failed.");
+    while(true);
+  }
+  Serial.println("SD Card initialized..");
+  gcode_file = SD.open("m3.gcd");
+}
 
-  // Enable the stepper driver (LOW to enable for DRV8825)
-  digitalWrite(ENABLE_PIN, LOW);
-
-  Serial.begin(115200); // Initialize serial communication for debugging
+char* readLineFromSDCard(){
+   unsigned int command_indx = 0;
+  while(true){
+    if(gcode_file.available()){
+      char c = gcode_file.read();
+      if(c == '\n' || c == '\r'){
+        c = '\0';
+      }
+      command[command_indx++] = c;
+     
+      if(c == '\0') break;
+    }else{
+      command[0] = '\0';
+      break;
+    }
+  }
+  for(int i=0;i<command_indx;i++){
+    if(command[i] == ';' || command[i] == '#'){
+      command[i]='\0';
+    }
+  }
+  return command;
 }
 
 void loop() {
-  // Rotate in one direction
-  digitalWrite(DIR_PIN, HIGH); // Set direction (HIGH or LOW for clockwise/counter-clockwise)
-  Serial.println("Moving in one direction...");
-  for (int i = 0; i < 1600; i++) { // 1600 steps for a common NEMA 17 with 1/16 microstepping
-    digitalWrite(STEP_PIN, HIGH);
-    delayMicroseconds(500); // Adjust delay for speed
-    digitalWrite(STEP_PIN, LOW);
-    delayMicroseconds(500);
+  char* x = readLineFromSDCard();
+  if(strlen(x)>0){
+    Serial.println(x);
   }
-  delay(1000); // Pause for 1 second
 
-  // Rotate in the opposite direction
-  digitalWrite(DIR_PIN, LOW); // Change direction
-  Serial.println("Moving in the opposite direction...");
-  for (int i = 0; i < 1600; i++) {
-    digitalWrite(STEP_PIN, HIGH);
-    delayMicroseconds(500);
-    digitalWrite(STEP_PIN, LOW);
-    delayMicroseconds(500);
-  }
-  delay(1000); // Pause for 1 second
+
 }
+

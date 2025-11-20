@@ -17,7 +17,7 @@ ENDSTOP Z-MAX	19
 #include <math.h>
 #include <avr/interrupt.h>
 #include <SD.h>
-
+#include <ctype.h> // For isdigit(), isspace()
 #define FAST_MOVE 1200/60
 #define BASE_FREQUENCY 16000000
 #define STEPS_PER_REVOLUTION 200
@@ -41,14 +41,16 @@ ENDSTOP Z-MAX	19
 #define TEMP_TOLERANCE 3
 #define PRINT_MODE 1 // 0 for XY Plootter 1 for 3D Printer
 
-#define BUFFER_SIZE 100
+#define RING_BUFFER_SIZE 16
+#define COMMAND_SIZE 128
 
 unsigned int positioning = 0; // 0 Absolute, 1 Relative
+char ring_buffer[RING_BUFFER_SIZE][COMMAND_SIZE];
+char command [COMMAND_SIZE];
+volatile char incoming_char;
 
-char incoming_char;
-char command_buffer[100]; // Buffer to store the incoming command
-int buffer_index = 0;
-bool command_complete = false;
+volatile int buffer_index = 0;
+volatile bool command_complete = false;
 int command_len = 0;
 
 const float SERIES_RESISTOR = 4700.0;
@@ -95,16 +97,14 @@ int prev_extruder_temp_error = 0;
 
 char *gcodes[GCODE_BUFFER_LENGTH];
 
-int gcode_indx = 0 , prev_gcode_indx = 0;
+int gcode_indx = -1 , prev_gcode_indx = -1;
 int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 
-volatile double x=0,y=0,z=0,extruder=0;
+volatile double x_position = 0, y_position = 0, z_position = 0, e_position = 0;
+volatile double x_position_prev = 0, y_position_prev = 0, z_position_prev = 0, e_position_prev = 0;
 double feed_rate=3;
 
-volatile double prev_x=0;
-volatile double prev_y=0;
-volatile double prev_z=0;
-volatile double prev_e=0;
+
 double prev_feed_rate=feed_rate;
 
 
@@ -123,11 +123,11 @@ double p = 0.0;
 double ins_x = 0, ins_y = 0;
 double p_x = 0, p_y = 0, p_z = 0, p_e = 0;
 double delta_x = 0.0, delta_y = 0.0, delta_z = 0.0, delta_e = 0.0;;
-double target_hotend_temp = -1;
+double target_hotend_temp = 1;
 double target_bed_temp = 55;
 double part_cooling_fan_speed = -1;
 int g_code = -1;
-
+bool is_mcode = false;
 
 double radius = 0.0;
 double I = 0.0, J = 0.0;
@@ -183,24 +183,50 @@ int accel_steps = 0;
 int current_accel_step = 0;
 double time_increment = 0.0;
 
-int head = -1;
-int tail = -1;
-char* ring_buffer[BUFFER_SIZE];
+volatile int head = -1;
+volatile int tail = -1;
+
 //char* ring_pointer;
 int one_round_complete = 0;
-long write_count =0;
-long read_count = 0;
-int head_tail_gap = 5;
+volatile long write_count =0;
+volatile long read_count = 0;
+
 
 int process_next_gcode = 1;
 
+long start_timer =0;
+
+long temp_loop_counter =0;
+
+bool print_from_sd = false;
+bool isr_completed = false;
+
+bool sd_upload = false;
+bool sd_upload_begin = false;
+
+long sd_upload_timer;
+
+
+bool is_ring_buffer_full(){
+  if(head == RING_BUFFER_SIZE-1 && tail>0){
+    return false;
+  }else if(head < (RING_BUFFER_SIZE-1)){
+    if(one_round_complete && (tail - head)>=0){
+      return false;
+    }else if(!one_round_complete){
+      return false;
+    }
+  }
+  return true;
+}
+
 int get_next_buffer_index_to_write(){
-  if(head == BUFFER_SIZE-1 && tail>0){
+  if(head == RING_BUFFER_SIZE-1 && tail>0){
     head = 0;
     one_round_complete = 1;
     write_count++;
     return head;
-  }else if(head < (BUFFER_SIZE-1)){
+  }else if(head < (RING_BUFFER_SIZE-1)){
     if(one_round_complete && (tail - head)>=0){
       head++;
       write_count++;
@@ -216,7 +242,7 @@ int get_next_buffer_index_to_write(){
 
 int get_next_buffer_index_to_read(){
   if(read_count<write_count){
-    if(tail == BUFFER_SIZE-1){
+    if(tail == RING_BUFFER_SIZE-1){
       tail = 0;
     }else{
       tail++;
@@ -230,6 +256,7 @@ int get_next_buffer_index_to_read(){
 
 
 int skip(){
+  //return 0;
   if(!is_linear_motion) return 0; 
   if(accel_steps >= 0){
     accel_steps--;
@@ -332,13 +359,23 @@ ISR(TIMER3_COMPA_vect){
 }
 */
 ISR(TIMER1_COMPA_vect){
-  //Serial.println((travelled ,DEC);
+
   //if(((travelled + (5.0 * MM_PER_STEP))  >= distance) && (distance >(5.0 * MM_PER_STEP) )){
+  //Serial.print(travelled,DEC);
+  //Serial.print("------");
+  //Serial.println(distance,DEC);
+  //if((distance - travelled) < 1000 * MM_PER_STEP){
+    //Serial.print(travelled,DEC);
+    //Serial.print("------");
+    //Serial.println(distance,DEC);
+ // }
+
   if(((travelled  >= distance))){
-    if(end_gcode_sub_indx == gcode_sub_indx) {
+   if(end_gcode_sub_indx == gcode_sub_indx) {
       gcode_indx++;
-      
+      isr_completed = true;
     }
+    
     TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); 
     travelled = 0.0;
     travelled_x = 0.0;
@@ -353,8 +390,13 @@ ISR(TIMER1_COMPA_vect){
     gcode_counter++;
     if(!is_linear_motion) next_quadrant();
     process_next_gcode = 1;
+    x_position_prev+=x_position;
+    y_position_prev+=x_position;
+    z_position_prev+=x_position;
+    e_position_prev+=x_position;
   }else{
     if(!skip()){
+      check_endstops();
       travelled = travelled + MM_PER_STEP;
       PORTD &= ~(1 << 7);
       PORTF &= ~(1 << 2);
@@ -544,24 +586,24 @@ void set_quadrants(){
   q4_x2_limit = (arc_center_x + radius);
   q4_y2_limit = (arc_center_y);
 
-  if((q1_x1_limit >= prev_x) && (prev_x >= q1_x2_limit) && (q1_y1_limit <= prev_y) && (prev_y <= q1_y2_limit)){
+  if((q1_x1_limit >= x_position_prev) && (x_position_prev >= q1_x2_limit) && (q1_y1_limit <= y_position_prev) && (y_position_prev <= q1_y2_limit)){
     start_quadrant = 1;
-  }else if((q2_x1_limit >= prev_x) && (prev_x >= q2_x2_limit) && (q2_y1_limit >= prev_y) && (prev_y >= q2_y2_limit)){
+  }else if((q2_x1_limit >= x_position_prev) && (x_position_prev >= q2_x2_limit) && (q2_y1_limit >= y_position_prev) && (y_position_prev >= q2_y2_limit)){
     start_quadrant = 2;
-  }else if((q3_x1_limit <= prev_x) && (prev_x <= q3_x2_limit) && (q3_y1_limit >= prev_y) && (prev_y >= q3_y2_limit)){
+  }else if((q3_x1_limit <= x_position_prev) && (x_position_prev <= q3_x2_limit) && (q3_y1_limit >= y_position_prev) && (y_position_prev >= q3_y2_limit)){
     start_quadrant = 3;
-  }else if((q4_x1_limit <= prev_x) && (prev_x <= q4_x2_limit) && (q4_y1_limit <= prev_y) && (prev_y <= q4_y2_limit)){
+  }else if((q4_x1_limit <= x_position_prev) && (x_position_prev <= q4_x2_limit) && (q4_y1_limit <= y_position_prev) && (y_position_prev <= q4_y2_limit)){
     start_quadrant = 4;
   }
 
 
-  if((q1_x1_limit >= x) && (x >= q1_x2_limit) && (q1_y1_limit <= y) && (y <= q1_y2_limit)){
+  if((q1_x1_limit >= x_position) && (x_position >= q1_x2_limit) && (q1_y1_limit <= y_position) && (y_position <= q1_y2_limit)){
     end_quadrant = 1;
-  }else if((q2_x1_limit >= x) && (x >= q2_x2_limit) && (q2_y1_limit >= y) && (y >= q2_y2_limit)){
+  }else if((q2_x1_limit >= x_position) && (x_position >= q2_x2_limit) && (q2_y1_limit >= y_position) && (y_position >= q2_y2_limit)){
     end_quadrant = 2;
-  }else if((q3_x1_limit <= x) && (x <= q3_x2_limit) && (q3_y1_limit >= y) && (y >= q3_y2_limit)){
+  }else if((q3_x1_limit <= x_position) && (x_position <= q3_x2_limit) && (q3_y1_limit >= y_position) && (y_position >= q3_y2_limit)){
     end_quadrant = 3;
-  }else if((q4_x1_limit <= x) && (x <= q4_x2_limit) && (q4_y1_limit <= y) && (y <= q4_y2_limit)){
+  }else if((q4_x1_limit <= x_position) && (x_position <= q4_x2_limit) && (q4_y1_limit <= y_position) && (y_position <= q4_y2_limit)){
     end_quadrant = 4;
   }
 
@@ -587,20 +629,20 @@ void next_quadrant(){
 void set_intermediate_coordinates(){
   switch (current_quadrant) {
     case 1:
-      x = clockwise ? q1_x1_limit : q1_x2_limit;
-      y = clockwise ? q1_y1_limit : q1_y2_limit;
+      x_position = clockwise ? q1_x1_limit : q1_x2_limit;
+      y_position = clockwise ? q1_y1_limit : q1_y2_limit;
     break;
     case 2:
-      x = clockwise ? q2_x1_limit : q2_x2_limit;
-      y = clockwise ? q2_y1_limit : q2_y2_limit;
+      x_position = clockwise ? q2_x1_limit : q2_x2_limit;
+      y_position = clockwise ? q2_y1_limit : q2_y2_limit;
     break;
     case 3:
-      x = clockwise ? q3_x1_limit : q3_x2_limit;
-      y = clockwise ? q3_y1_limit : q3_y2_limit;
+      x_position = clockwise ? q3_x1_limit : q3_x2_limit;
+      y_position = clockwise ? q3_y1_limit : q3_y2_limit;
     break;
     case 4:
-      x = clockwise ? q4_x1_limit : q4_x2_limit;
-      y = clockwise ? q4_y1_limit : q4_y2_limit;
+      x_position = clockwise ? q4_x1_limit : q4_x2_limit;
+      y_position = clockwise ? q4_y1_limit : q4_y2_limit;
     break;
 
   }
@@ -609,22 +651,20 @@ void set_intermediate_coordinates(){
 
 void process_quadrant_arc(){
   if((current_quadrant == start_quadrant) && (current_quadrant == end_quadrant)){
-    //intermediate_x = x;
-    //intermediate_y = y;
   }else if(current_quadrant != end_quadrant){
     if(current_quadrant == start_quadrant){
       set_intermediate_coordinates();
     }else{
-      prev_x = x;
-      prev_y = y;
+      x_position_prev = x_position;
+      y_position_prev = y_position;
       set_intermediate_coordinates();
     }
   }else{
     if(current_quadrant!=start_quadrant){
-      prev_x = x;
-      prev_y = y;
-      x = intermediate_x;
-      y = intermediate_y;
+      x_position_prev = x_position;
+      y_position_prev = y_position;
+      x_position = intermediate_x;
+      y_position = intermediate_y;
     }
   }
   set_sub_circular_motion_params();
@@ -633,7 +673,7 @@ void process_quadrant_arc(){
 
 
 void set_sub_circular_motion_params(){
-    double chord_length = sqrt(pow(prev_x-x,2) + pow(prev_y-y,2));
+    double chord_length = sqrt(pow(x_position_prev-x_position,2) + pow(y_position_prev-y_position,2));
     theta = (asin(chord_length/(2*radius)))*2;
     double arc_length = theta * radius;
     distance = arc_length;
@@ -705,7 +745,7 @@ void set_direction(){
 }
 
 int get_direction_x(){
-  double inc = x - p_x;
+  double inc = x_position - p_x;
   if(inc < 0)
     return -1;
   if(inc > 0)
@@ -715,7 +755,7 @@ int get_direction_x(){
 }
 
 int get_direction_y(){
-  double inc = y - p_y;
+  double inc = y_position - p_y;
   if(inc < 0)
     return -1;
   if(inc > 0)
@@ -725,7 +765,7 @@ int get_direction_y(){
 }
 
 int get_direction_z(){
-  double inc = z - p_z;
+  double inc = z_position - p_z;
   if(inc < 0)
     return -1;
   if(inc > 0)
@@ -735,7 +775,7 @@ int get_direction_z(){
 }
 
 int get_direction_e(){
-  double inc = extruder - p_e;
+  double inc = e_position - p_e;
   if(inc < 0)
     return -1;
   if(inc > 0)
@@ -758,11 +798,11 @@ void pre_process(){
     time_increment = count/TIMER_FREQUENCY;
     double transition_duration = feed_rate/ACC_PROFILE;
     accel_steps = round(transition_duration * feed_rate * STEPS_PER_MM);
-    double z_diff = abs(z - p_z);
-    double e_diff = abs(extruder - p_e);
+    double z_diff = abs(z_position - p_z);
+    double e_diff = abs(e_position - p_e);
   if(is_linear_motion){
-    double x_diff = abs(x - p_x);
-    double y_diff = abs(y - p_y);
+    double x_diff = abs(x_position - p_x);
+    double y_diff = abs(y_position - p_y);
     distance = sqrt((x_diff * x_diff) + (y_diff * y_diff) + (z_diff * z_diff) + (e_diff * e_diff));
     total_distance_in_steps = round(distance * STEPS_PER_MM);
     constant_velocity_distance_in_steps = total_distance_in_steps -(2 * accel_steps); 
@@ -772,17 +812,17 @@ void pre_process(){
     z_distance_ratio = z_diff/distance;
     e_distance_ratio = e_diff/distance;
   }else{
-    arc_center_x = I + prev_x;
-    arc_center_y = J + prev_y;
-    intermediate_x = x;
-    intermediate_y = y;
-    radius = sqrt(pow(prev_x - arc_center_x,2) + pow(prev_y - arc_center_y,2));  
+    arc_center_x = I + x_position_prev;
+    arc_center_y = J + y_position_prev;
+    intermediate_x = x_position;
+    intermediate_y = y_position;
+    radius = sqrt(pow(x_position_prev - arc_center_x,2) + pow(y_position_prev - arc_center_y,2));  
 
-    double v1_x = prev_x - arc_center_x;
-    double v1_y = prev_y - arc_center_y;
+    double v1_x = x_position_prev - arc_center_x;
+    double v1_y = y_position_prev - arc_center_y;
 
-    double v2_x = x - arc_center_x;
-    double v2_y = y - arc_center_y;
+    double v2_x = x_position - arc_center_x;
+    double v2_y = y_position - arc_center_y;
 
     double theta1 = atan2(v1_y,v1_x);
     double theta2 = atan2(v2_y,v2_x);
@@ -807,19 +847,10 @@ void pre_process(){
   SREG = sreg;
   TCCR1B = (1<<WGM12) | (1<<CS10);
   sei();
+
 }
 
-void set_mcode_modes(){
-   switch(g_code){
-      case 28:
-        Serial.println("ok");
-        delay(1000);
-        while(Serial.available() > 0){
-          Serial.println("Receiving...");
-        }
-      break;
-   }
-}
+
 
 void set_gcode_modes(){
   switch(g_code){
@@ -860,60 +891,49 @@ void set_gcode_modes(){
     case 21:
       Serial.println("mm system");
       break;  
-    case 28:
-      Serial.println("homing..");
-      //home();
-      break;  
     case 90:
       positioning = 0;
-      x =  prev_x;
-      y = prev_y;
-      z = prev_z;
-      extruder = prev_e;
       break;   
     case 91:
       positioning = 1;
-      prev_x = x;
-      prev_y = y;
-      prev_z = z;
-      prev_e = extruder;
-      x = 0;
-      y = 0;
-      z = 0;
-      extruder = 0;
       break;         
     case 105:
      // Serial.println("temperature report ..");
       break;
     case 107:
       part_cooling_fan_speed = 0;
-      break;    
     case 114:
       //Serial.println("current position request..");
       break;    
+    default:
+      break;  
   }
 }
 
 int is_gcode_motion_command(){
-  if(g_code ==0 || g_code ==1 || g_code ==2 || g_code ==3 || g_code ==4 || g_code ==10 || g_code ==11 || g_code ==28 || g_code ==29 || g_code ==30 || g_code ==34 || g_code ==53)
+  //Serial.println(g_code);
+  if(g_code ==0 || g_code ==1 || g_code ==2 || g_code ==3 || g_code ==4 || g_code ==10 || g_code ==11 || (!is_mcode && g_code ==28) || g_code ==29 || g_code ==30 || g_code ==34 || g_code ==53)
     return 1;
   return 0;
 }
 
 void parse_gcodes(){
-  char temp_string[500];
+  x_position = 0;
+  y_position = 0;
+  z_position = 0;
+  e_position = 0;
+  char temp_string[COMMAND_SIZE];
   g_code = -1;
+  is_mcode = false;
+  char* file_name;
   distance = 0.0;
-  if(positioning == 0){// Absolute positioning
-    prev_x = x;
-    prev_y = y;
-    prev_z = z;
-    prev_e = extruder;
-  }
 
   //strcpy(temp_string, gcodes[gcode_indx-previous_batch_gcode_indx]);
-  
-  strcpy(temp_string, ring_buffer[(gcode_indx%BUFFER_SIZE)-1]);
+  //int indx = gcode_indx < (RING_BUFFER_SIZE) ? gcode_indx: (gcode_indx%(RING_BUFFER_SIZE));
+  int indx = gcode_indx%(RING_BUFFER_SIZE);
+  strlcpy(temp_string, ring_buffer[indx], sizeof(temp_string));
+
+
   //Serial.println(temp_string);
   char *token;
   const char *delimiter = " ";
@@ -923,6 +943,12 @@ void parse_gcodes(){
   while (token != NULL) {
     char type = token[0];
     char* val= token+1;
+    /*
+    char* endOfValue = strchr(val, " "); 
+    if (endOfValue != NULL) {
+      *endOfValue = '\0'; 
+    }
+   */
     switch(type){
       case ';':
         set_gcode_modes();
@@ -933,18 +959,22 @@ void parse_gcodes(){
         break;
       case 'M':
         g_code = atoi(val);
-        set_mcode_modes();
+        is_mcode = true;
         break;
       case 'X':
-        x=atof(val);
+        x_position = atof(val);
+        x_position = (x_position == 0) ? 0.00001 : x_position;
+        if(!is_mcode && g_code == 28) home_x();
         break;
       case 'Y':
-        y=atof(val);
-        y = (y==0) ? 0.00001 : y;
+        y_position = atof(val);
+        y_position = (y_position == 0) ? 0.00001 : y_position;
+        if(!is_mcode && g_code == 28) home_y();
         break;
       case 'Z':
-        z=atof(val);
-        z = (z==0) ? 0.00001 : z;
+        z_position = atof(val);
+        z_position = (z_position == 0) ? 0.00001 : z_position;
+        if(!is_mcode && g_code == 28) home_z();
         break;        
       case 'I':
         I=atof(val);
@@ -953,9 +983,9 @@ void parse_gcodes(){
         J=atof(val);
         break;            
       case 'E':
-        extruder = atof(val);
-        //e = (e==0) ? 0.00001 : e;      
-        if(g_code == 92) p_e = extruder;
+        e_position = atof(val);
+        e_position = (e_position == 0) ? 0.00001 : e_position;
+        if(g_code == 92) p_e = e_position;
         break;
       case 'F':
          feed_rate=atoi(val)/60;
@@ -970,33 +1000,39 @@ void parse_gcodes(){
           part_cooling_fan_speed = atof(val);
         }
         break;    
+      default:
+        file_name = token;
     }
     token = strtok(NULL, delimiter); // Get the next token
   }
 
 
   
-  if((gcode_indx % 1) == 0){
+  if((gcode_indx % 1 == 0)){
 
     Serial.print(gcode_indx);
     Serial.print(" ### ");
     Serial.print(g_code);
     Serial.print(" ### ");
 
-    Serial.print(x, DEC);
+    Serial.print(x_position, DEC);
     Serial.print(" ### ");
-    Serial.print(z, DEC);
+    Serial.print(y_position, DEC);
     Serial.print(" ### ");
-
-    Serial.print(get_direction_e());
+    Serial.print(z_position, DEC);
     Serial.print(" ### ");
     Serial.println(feed_rate);
   }
-  
 
   if(is_gcode_motion_command()) { 
-    Serial.println(" PRE PROCESSING...");
+    //Serial.println(" PRE PROCESSING...");
     pre_process();
+   
+  }else if(g_code == 105){
+    char response_buffer[50];
+    sprintf(response_buffer, "ok T:%d /%d B:%d /%d", (int)read_extruder_temperature(),(int)target_hotend_temp,(int)read_bed_temperature(),(int)target_bed_temp);
+    gcode_indx++;
+    Serial.println(response_buffer);      
   }else if(g_code == 109){
     while(target_hotend_temp >0 && temp_tolerance_count_extruder > 0){
       maintain_extruder_temperature();
@@ -1004,6 +1040,7 @@ void parse_gcodes(){
     Serial.print("Hotend Temp: ");
     Serial.println(read_extruder_temperature());
     gcode_indx++;
+    Serial.println("ok");
   }else if(g_code == 190){
     while(target_bed_temp > 0 && temp_tolerance_count_bed > 0){
       maintain_bed_temperature();
@@ -1011,11 +1048,50 @@ void parse_gcodes(){
     Serial.print("Bed Temp: ");
     Serial.println(read_bed_temperature());
     gcode_indx++;
-  }
-  else {
+    Serial.println("ok");
+  }else if(is_mcode && g_code == 28){
+    sd_upload_begin = true;
+    gcode_file =  SD.open(file_name, FILE_WRITE);
     gcode_indx++;
+    Serial.println("ok");
+  }else if(is_mcode && g_code == 29){
+    sd_upload_begin = false;
+    gcode_file.close();
+    gcode_indx++;
+    Serial.println("ok");
+  }else if(is_mcode && g_code == 20){
+    Serial.println("Begin file list");
+    File root  = SD.open("/");
+    while (true) {
+      File entry = root.openNextFile();
+      if(!entry) break;
+      if (!entry.isDirectory()) {
+        Serial.println(entry.name());
+      }
+    }
+    Serial.println("End file list");
+    Serial.println("ok");    
+    gcode_indx++;
+  }else if(is_mcode && g_code == 23){
+    Serial.print("Printing file ");
+    Serial.println(file_name);
+    gcode_file = SD.open(file_name, FILE_READ);
+    print_from_sd = true;
+    gcode_indx++;
+    Serial.println("ok");
+
+  }else if (is_mcode && g_code == 114){ // Printer status
+    char response_buffer[50];
+    sprintf(response_buffer, "X:%d Y:%d Z:%d E:%d ok", (int)x_position_prev, (int)y_position_prev,(int)z_position_prev,(int)e_position_prev);
+    gcode_indx++;
+    Serial.println(response_buffer);     
+    Serial.println("ok");
+  } else {
+    gcode_indx++;
+    Serial.println("ok");
   }
 }
+
 
 
 int readNextNLines(){
@@ -1066,14 +1142,8 @@ void moveZ(int z_clockwise){
   }
 }
 
-
-void home_x(){
+void backoff_x_from_endstop(){
   PORTD &= ~(1 << 7);
-  while(!(PINE & (1 << 5))){ //X Axis
-    set_clockwise_for_x();
-    step_x();
-    delayMicroseconds(100);
-  }
   int k=0;
   while(true){
     k++;
@@ -1085,19 +1155,23 @@ void home_x(){
   PORTD |= (1 << 7);
 }
 
-void home_y(){
-  PORTF &= ~(1 << 2); 
-  int k = 0;
-  while(!(PINJ & (1 << 0))){ //Y Axis
-    set_anti_clockwise_for_y();
-    step_y();
+void home_x(){
+  PORTD &= ~(1 << 7);
+  while(!(PINE & (1 << 5))){ //X Axis
+    set_clockwise_for_x();
+    step_x();
     delayMicroseconds(100);
   }
-  
+  backoff_x_from_endstop();
+  PORTD |= (1 << 7);
+}
+
+void backoff_y_from_endstop(){
+  PORTF &= ~(1 << 2); 
+  int k = 0;
   while(true){
     k++;
     set_clockwise_for_y();
-    
     step_y();
     delayMicroseconds(100);
     if(k>5000) break;
@@ -1105,33 +1179,42 @@ void home_y(){
   PORTF |= (1 << 2);
 }
 
-void home_z(){
-  digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
-  int k = 0;
-  
-  while(!(PIND & (1 << 2))){ //Z Axis
-    set_anti_clockwise_for_z();
-    step_z();
+void home_y(){
+  PORTF &= ~(1 << 2); 
+  while(!(PINJ & (1 << 0))){ //Y Axis
+    set_anti_clockwise_for_y();
+    step_y();
     delayMicroseconds(100);
   }
+  backoff_y_from_endstop();
+  PORTF |= (1 << 2);
+}
+
+void backoff_z_from_endstop(){
+  digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
+  int k = 0;
   while(true){
     k++;
     set_clockwise_for_z();
     step_z();
     delayMicroseconds(100);
-    if(k>2500) break;
+    if(k > 2500) break;
+  }  
+  digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
+}
+
+void home_z(){
+  digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
+  while(!(PIND & (1 << 2))){ //Z Axis
+    set_anti_clockwise_for_z();
+    step_z();
+    delayMicroseconds(100);
   }
+  backoff_z_from_endstop();
   digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
 }
     
   
-void home(){
-  if(disable_homing) return; 
-  home_x();
-  home_y();
-  home_z();
-}
-
 
 void z_test(){
   int k=0;
@@ -1173,11 +1256,11 @@ double read_bed_temperature(){
   }
   */
   //return curr_temp; 
-  return 55.00;
+  return 60.00;
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial);
 
   
@@ -1189,8 +1272,7 @@ void setup() {
   }
   Serial.println("SD Card initialized..");
   //gcode_file = SD.open("m3.gcd");
-
-  
+   
 
   // Enable the stepper driver (LOW to enable for DRV8825)
   
@@ -1274,8 +1356,7 @@ void setup() {
 
   OCR3A = 1000;
 */
- 
-  readNextNLines();
+
   TIMSK1=  (1<<OCIE1A);
   //TIMSK3 |= (1 << OCIE3A);
   //parse_gcodes();
@@ -1318,94 +1399,209 @@ void manage_circular_motion(){
   }
 }
 
-void handle_pronter(){
-  while(Serial.available() > 0){
+
+void strip_protocol_data(char* line) {
+    char* src = line;
+    char* dst = line;
+    if (*src == 'N') {
+        while (isdigit((unsigned char)*src)) {
+            src++;
+        }
+        if (isspace((unsigned char)*src)) {
+            src++;
+        }
+    }
+    while (*src != '\0') {
+        if (*src == '*') {
+            break; 
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0'; // Null-terminate the cleaned string
+}
+
+void handle_pronter_serial_commands(){
+  if(sd_upload_timer !=0 && sd_upload_begin && (millis() - sd_upload_timer) > 500){
+    sd_upload_begin = false;
+    sd_upload_timer = 0;
+    gcode_file.close();
+  }
+
+  if(Serial.available() > 0){
     char incoming_char = Serial.read();
     if (incoming_char == '\n' || incoming_char == '\r') { // END Command
-      command_buffer[buffer_index] = '\0'; // Null-terminate the string
+      command[buffer_index] = '\0'; // Null-terminate the string
       buffer_index = 0; // Reset index for the next command
       command_complete = true;
     } else {
-      if (buffer_index < 99) {
-        command_buffer[buffer_index++] = incoming_char;
-        command_len = buffer_index;
+      if (buffer_index < COMMAND_SIZE) {
+        command[buffer_index++] = incoming_char;
       }
     }
   }
   if(command_complete){
-    insertToRingBuffer(command_buffer);
-    /*   
-    int indx = (gcode_indx % 5);
-    free(gcodes[indx]);
-    gcodes[indx] = malloc(command_len);
-    command_complete = false;
-    strcpy(gcodes[indx], command_buffer);
-    if(indx == 0) previous_batch_gcode_indx = gcode_indx;    
-    command_len = 0;
-    parse_gcodes();
-    */
-    Serial.println("ok");
-  } 
 
+    if(sd_upload_begin){
+      sd_upload_timer = millis();
+      if(insertToSDCard()){
+        command_complete = false;
+        Serial.println("ok");
+      }
+    }else{
+      if(insertToRingBuffer()){
+        command_complete = false;
+      }
+    }
+  } 
+//readFromSdAndInsertInBuffer();
 }
+
+
+bool insertToRingBuffer(){
+  if(strlen(command) > 0){
+    int write_indx = get_next_buffer_index_to_write();
+    if(write_indx >= 0 && write_indx < RING_BUFFER_SIZE){ 
+      strlcpy(ring_buffer[write_indx], command,COMMAND_SIZE);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool insertToSDCard(){
+  
+  if(strlen(command) > 0){
+    if (gcode_file) {
+      int start_indx = 0;
+      int end_indx = 0;
+      int len = strlen(command);
+      for(int i=0; i<len;i++){
+        if(start_indx ==0 && command[i]==' '){
+           start_indx = i+1;
+
+        }
+        if(end_indx == 0 && command[i] == '*'){
+          end_indx = i;
+          break;
+        }
+      }
+      int size = (end_indx-start_indx) + 1;
+      char clean_command[size];
+      int j=0;
+      for(int i=start_indx;i<end_indx;i++){
+         clean_command[j++]=command[i]; 
+      }
+      clean_command[j] = '\0';
+      gcode_file.println(clean_command);
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
 void insertToRingBuffer(char* command) {
-  Serial.println(command);
+  command_complete = false; // Serial.println(command);
   int write_indx = get_next_buffer_index_to_write();
-  //Serial.print("Write Indx: ");
-  //Serial.println(write_indx);
   free(ring_buffer[write_indx]);
-  ring_buffer[write_indx] = malloc(command_len);
-  command_complete = false;
-  strcpy(ring_buffer[write_indx], command_buffer);
+  ring_buffer[write_indx] = malloc(strlen(command));
+  ring_buffer[write_indx] = command;
+  //strlcpy(ring_buffer[write_indx], command, sizeof(ring_buffer) - 1);
+  
   command_len = 0;
   //strcpy(temp_string, ring_buffer[write_indx]);
  // Serial.println(temp_string);
+
+}
+*/
+
+void check_endstops(){
+  if(PINE & (1 << 5)){
+    backoff_x_from_endstop();
+  }
+  if((PINJ & (1 << 0))){
+    backoff_y_from_endstop();
+  } 
+  if((PIND & (1 << 2))){
+    backoff_z_from_endstop();
+  }
 }
 
 
 
+
+
+
+char* readLineFromSDCard(){
+  unsigned int command_indx = 0;
+  while(true){
+    if(gcode_file.available()){
+      char c = gcode_file.read();
+      if(c == '\n' || c == '\r'){
+        c = '\0';
+      }
+      command[command_indx++] = c;
+      if(c == '\0') break;
+    }else{
+      command[0] = '\0';
+      break;
+    }
+  }
+  for(int i=0;i<command_indx;i++){
+    if(command[i] == ';' || command[i] == '#'){
+      command[i]='\0';
+    }
+  }
+  return command;
+}
+
 void loop(){
-  handle_pronter();
+
+  handle_pronter_serial_commands();
+  if(print_from_sd){
+    if(!is_ring_buffer_full()){
+      char* x = readLineFromSDCard();
+      if(strlen(x)>0){
+        insertToRingBuffer();
+      }
+    }
+  }
+
   if(gcode_indx > prev_gcode_indx) {
     int next_read = get_next_buffer_index_to_read();
     if(next_read > -1){
       prev_gcode_indx = gcode_indx;
+
       parse_gcodes();
+
     }
   }
-  /*
-  if(prev_read < next_read){
-    Serial.print("Next Read: ");
-    Serial.println(next_read);
-    prev_read = next_read;
-    if(prev_read == 99) prev_read=-1;
+  
+  if(isr_completed) {
+    isr_completed = false;
+
+    Serial.println("ok");
   }
-  */
+
 }
 
 /*
-void loop() {
+
+void loop(){
   handle_pronter();
-  
-  maintain_extruder_temperature();
-  if((gcode_indx - previous_batch_gcode_indx)<actual_gcode_buffer_length){
-    if(gcode_indx>prev_gcode_indx){
-     prev_gcode_indx = gcode_indx;
-     parse_gcodes();
+    if(gcode_indx > prev_gcode_indx) {
+
+    int next_read = get_next_buffer_index_to_read();
+
+    if(next_read > -1){
+
+      prev_gcode_indx = gcode_indx;
+      parse_gcodes2();
+     
+      readFromSdAndInsertInBuffer();
+
     }
-  }else{
-    int x = readNextNLines();
-    if(x){
-      previous_batch_gcode_indx = gcode_indx;
-    }
-  }
-  
-  if(gcode_sub_indx>prev_gcode_sub_indx){
-    process_quadrant_arc();
-    prev_gcode_sub_indx = gcode_sub_indx;
-    TCCR1B = (1<<WGM12) | (1<<CS10);
   }
 }
-
 */
 
