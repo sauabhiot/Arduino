@@ -35,14 +35,17 @@ ENDSTOP Z-MAX	19
 #define THERMISTOR_PIN A13 
 #define HEATER_BED_PIN A14
 #define CHIP_SELECT_PIN 53
+#define Z_HEIGHT_PROBE A5
 
 #define HEATER_BLOCK_PIN 40 
 
 #define TEMP_TOLERANCE 3
-#define PRINT_MODE 1 // 0 for XY Plootter 1 for 3D Printer
+
 
 #define RING_BUFFER_SIZE 16
 #define COMMAND_SIZE 128
+
+unsigned int PRINT_MODE = 0; // 0 for XY Plootter 1 for 3D Printer
 
 unsigned int positioning = 0; // 0 Absolute, 1 Relative
 char ring_buffer[RING_BUFFER_SIZE][COMMAND_SIZE];
@@ -66,10 +69,6 @@ int temp_tolerance_count_extruder = 50;
 int z_lifted = 0;
 
 int actual_gcode_buffer_length = 0;
-
-
-
-
 
 volatile int previous_batch_gcode_indx = 0;
 
@@ -101,6 +100,7 @@ int gcode_indx = -1 , prev_gcode_indx = -1;
 int end_gcode_sub_indx = 0 , gcode_sub_indx = 0 , prev_gcode_sub_indx = 0;
 
 volatile double x_position = 0, y_position = 0, z_position = 0, e_position = 0;
+volatile double x_input = 0, y_input = 0, z_input = 0, e_input = 0;
 volatile double x_position_prev = 0, y_position_prev = 0, z_position_prev = 0, e_position_prev = 0;
 double feed_rate=3;
 
@@ -206,6 +206,11 @@ bool sd_upload_begin = false;
 
 long sd_upload_timer;
 
+bool x_endstop_enabled = 1;
+bool y_endstop_enabled = 1;
+bool z_endstop_enabled = 1;
+volatile bool plate_touched = false;
+bool sc_card_enabled = false;
 
 bool is_ring_buffer_full(){
   if(head == RING_BUFFER_SIZE-1 && tail>0){
@@ -390,10 +395,17 @@ ISR(TIMER1_COMPA_vect){
     gcode_counter++;
     if(!is_linear_motion) next_quadrant();
     process_next_gcode = 1;
-    x_position_prev+=x_position;
-    y_position_prev+=x_position;
-    z_position_prev+=x_position;
-    e_position_prev+=x_position;
+    if(positioning == 1){
+      x_position_prev+=x_input;
+      y_position_prev+=y_input;
+      z_position_prev+=z_input;
+      e_position_prev+=e_input;
+    }else{
+      x_position_prev = x_input;
+      y_position_prev = y_input;
+      z_position_prev = z_input;
+      e_position_prev = e_input;
+    }
   }else{
     if(!skip()){
       check_endstops();
@@ -787,12 +799,14 @@ int get_direction_e(){
 
 
 void pre_process(){
+  /*
   if(positioning == 1){// Relative positioning
     p_x = 0;
     p_y = 0;
     p_z = 0;
     p_e = 0;
   }
+  */
     double steps_per_sec = STEPS_PER_MM * feed_rate; // conversion of feedrate which is Speed of mm/sec to Speed in steps/sec
     count =  round(TIMER_FREQUENCY/(steps_per_sec)) - 1;
     time_increment = count/TIMER_FREQUENCY;
@@ -891,6 +905,14 @@ void set_gcode_modes(){
     case 21:
       Serial.println("mm system");
       break;  
+    case 28:
+      moveZ(1);
+      moveZ(1);
+      moveZ(1);
+      home_x();
+      home_y();
+      home_z();
+      break;  
     case 90:
       positioning = 0;
       break;   
@@ -912,16 +934,16 @@ void set_gcode_modes(){
 
 int is_gcode_motion_command(){
   //Serial.println(g_code);
-  if(g_code ==0 || g_code ==1 || g_code ==2 || g_code ==3 || g_code ==4 || g_code ==10 || g_code ==11 || (!is_mcode && g_code ==28) || g_code ==29 || g_code ==30 || g_code ==34 || g_code ==53)
+  if(g_code ==0 || (!is_mcode && g_code ==1) || g_code ==2 || g_code ==3 || g_code ==4 || g_code ==10 || g_code ==11 || (!is_mcode && g_code == 28) || g_code ==29 || g_code ==30 || g_code ==34 || g_code ==53)
     return 1;
   return 0;
 }
 
 void parse_gcodes(){
-  x_position = 0;
-  y_position = 0;
-  z_position = 0;
-  e_position = 0;
+  x_position = x_position_prev, x_input = 0;
+  y_position = y_position_prev, y_input = 0;
+  z_position = z_position_prev, z_input = 0;
+  e_position = e_position_prev, e_input = 0;
   char temp_string[COMMAND_SIZE];
   g_code = -1;
   is_mcode = false;
@@ -934,7 +956,6 @@ void parse_gcodes(){
   strlcpy(temp_string, ring_buffer[indx], sizeof(temp_string));
 
 
-  //Serial.println(temp_string);
   char *token;
   const char *delimiter = " ";
   token = strtok(temp_string, delimiter);
@@ -950,9 +971,6 @@ void parse_gcodes(){
     }
    */
     switch(type){
-      case ';':
-        set_gcode_modes();
-        break;
       case 'G':
         g_code = atoi(val);
         set_gcode_modes();
@@ -964,17 +982,20 @@ void parse_gcodes(){
       case 'X':
         x_position = atof(val);
         x_position = (x_position == 0) ? 0.00001 : x_position;
-        if(!is_mcode && g_code == 28) home_x();
+        x_input = x_position;
+        if(positioning == 1) x_position += x_position_prev; 
         break;
       case 'Y':
         y_position = atof(val);
         y_position = (y_position == 0) ? 0.00001 : y_position;
-        if(!is_mcode && g_code == 28) home_y();
+        y_input = y_position;
+        if(positioning == 1) y_position += y_position_prev; 
         break;
       case 'Z':
         z_position = atof(val);
         z_position = (z_position == 0) ? 0.00001 : z_position;
-        if(!is_mcode && g_code == 28) home_z();
+        z_input = z_position;
+        if(positioning == 1) z_position += z_position_prev; 
         break;        
       case 'I':
         I=atof(val);
@@ -985,6 +1006,8 @@ void parse_gcodes(){
       case 'E':
         e_position = atof(val);
         e_position = (e_position == 0) ? 0.00001 : e_position;
+        e_input = e_position;
+        if(positioning == 1) e_position +=e_position_prev ; 
         if(g_code == 92) p_e = e_position;
         break;
       case 'F':
@@ -999,6 +1022,8 @@ void parse_gcodes(){
         }else if(g_code == 106){
           part_cooling_fan_speed = atof(val);
         }
+      case 'P':
+          PRINT_MODE = atoi(val);
         break;    
       default:
         file_name = token;
@@ -1008,7 +1033,7 @@ void parse_gcodes(){
 
 
   
-  if((gcode_indx % 1 == 0)){
+  if((gcode_indx % 1 == 0 && g_code<3)){
 
     Serial.print(gcode_indx);
     Serial.print(" ### ");
@@ -1150,12 +1175,19 @@ void backoff_x_from_endstop(){
     set_anti_clockwise_for_x();
     step_x();
     delayMicroseconds(100);
-    if(k>5000) break;
+    if(k>300) break;
   }
   PORTD |= (1 << 7);
+  x_input = 0;
+  x_position = 0;
+  x_position_prev = 0;
+  p_x = 0;  
+  travelled = 0;
+  distance = 0;
 }
 
 void home_x(){
+  Serial.println("Homing x");
   PORTD &= ~(1 << 7);
   while(!(PINE & (1 << 5))){ //X Axis
     set_clockwise_for_x();
@@ -1169,14 +1201,21 @@ void home_x(){
 void backoff_y_from_endstop(){
   PORTF &= ~(1 << 2); 
   int k = 0;
+  int j = 300;
   while(true){
     k++;
     set_clockwise_for_y();
     step_y();
     delayMicroseconds(100);
-    if(k>5000) break;
+    if(k>j) break;
   }
   PORTF |= (1 << 2);
+  y_input = 0;
+  y_position = 0;
+  y_position_prev = 0;
+  p_y = 0;
+  travelled = 0;
+  distance = 0;
 }
 
 void home_y(){
@@ -1197,10 +1236,16 @@ void backoff_z_from_endstop(){
     k++;
     set_clockwise_for_z();
     step_z();
-    delayMicroseconds(100);
-    if(k > 2500) break;
+    delayMicroseconds(500);
+    if(k > 300) break;
   }  
   digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
+  z_input = 0;
+  z_position = 0;
+  z_position_prev = 0;
+  p_z = 0;
+  travelled = 0;
+  distance = 0;  
 }
 
 void home_z(){
@@ -1208,7 +1253,7 @@ void home_z(){
   while(!(PIND & (1 << 2))){ //Z Axis
     set_anti_clockwise_for_z();
     step_z();
-    delayMicroseconds(100);
+    delayMicroseconds(500);
   }
   backoff_z_from_endstop();
   digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
@@ -1263,14 +1308,15 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
 
-  
-
-  Serial.print("Initializing SD card...");
-  if (!SD.begin(CHIP_SELECT_PIN)) {
-    Serial.println("SD Card initialization failed.");
-    while(true);
+  pinMode(Z_HEIGHT_PROBE, INPUT_PULLUP);
+  if(sc_card_enabled){
+    Serial.print("Initializing SD card...");
+    if (!SD.begin(CHIP_SELECT_PIN)) {
+      Serial.println("SD Card initialization failed.");
+      while(true);
+    }
+    Serial.println("SD Card initialized..");
   }
-  Serial.println("SD Card initialized..");
   //gcode_file = SD.open("m3.gcd");
    
 
@@ -1363,18 +1409,6 @@ void setup() {
 
 }
 
-void check_end_stops(){
-  if (PINE & (1 << 5)) {
-    PORTD |= (1 << 7);
-  }
-  if (PINJ & (1 << 0)) {
-    PORTF |= (1 << 2);
-  }
-  if (PIND & (1 << 2)) {
-    digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
-  }
-}
-
 /*
 void manage_linear_motion(){
   if((gcode_indx - previous_batch_gcode_indx)<=actual_gcode_buffer_length){
@@ -1420,7 +1454,7 @@ void strip_protocol_data(char* line) {
     *dst = '\0'; // Null-terminate the cleaned string
 }
 
-void handle_pronter_serial_commands(){
+void handle_serial_communication(){
   if(sd_upload_timer !=0 && sd_upload_begin && (millis() - sd_upload_timer) > 500){
     sd_upload_begin = false;
     sd_upload_timer = 0;
@@ -1440,7 +1474,6 @@ void handle_pronter_serial_commands(){
     }
   }
   if(command_complete){
-
     if(sd_upload_begin){
       sd_upload_timer = millis();
       if(insertToSDCard()){
@@ -1499,30 +1532,15 @@ bool insertToSDCard(){
   return false;
 }
 
-/*
-void insertToRingBuffer(char* command) {
-  command_complete = false; // Serial.println(command);
-  int write_indx = get_next_buffer_index_to_write();
-  free(ring_buffer[write_indx]);
-  ring_buffer[write_indx] = malloc(strlen(command));
-  ring_buffer[write_indx] = command;
-  //strlcpy(ring_buffer[write_indx], command, sizeof(ring_buffer) - 1);
-  
-  command_len = 0;
-  //strcpy(temp_string, ring_buffer[write_indx]);
- // Serial.println(temp_string);
-
-}
-*/
 
 void check_endstops(){
-  if(PINE & (1 << 5)){
+  if(x_endstop_enabled && PINE & (1 << 5)){
     backoff_x_from_endstop();
   }
-  if((PINJ & (1 << 0))){
+  if(y_endstop_enabled && (PINJ & (1 << 0))){
     backoff_y_from_endstop();
   } 
-  if((PIND & (1 << 2))){
+  if(z_endstop_enabled && (PIND & (1 << 2))){
     backoff_z_from_endstop();
   }
 }
@@ -1555,9 +1573,26 @@ char* readLineFromSDCard(){
   return command;
 }
 
+/*
+void loop(){
+  delay(1000);
+  Serial.println(digitalRead(Z_HEIGHT_PROBE));
+}*/
+
+
 void loop(){
 
-  handle_pronter_serial_commands();
+  if(digitalRead(Z_HEIGHT_PROBE) == LOW && !plate_touched){
+    plate_touched = true;
+    Serial.println("ok Touched");
+  }
+  if(digitalRead(Z_HEIGHT_PROBE) == HIGH && plate_touched){
+    plate_touched = false;
+
+  }
+
+
+  handle_serial_communication();
   if(print_from_sd){
     if(!is_ring_buffer_full()){
       char* x = readLineFromSDCard();
@@ -1579,29 +1614,9 @@ void loop(){
   
   if(isr_completed) {
     isr_completed = false;
-
     Serial.println("ok");
   }
-
 }
 
-/*
 
-void loop(){
-  handle_pronter();
-    if(gcode_indx > prev_gcode_indx) {
-
-    int next_read = get_next_buffer_index_to_read();
-
-    if(next_read > -1){
-
-      prev_gcode_indx = gcode_indx;
-      parse_gcodes2();
-     
-      readFromSdAndInsertInBuffer();
-
-    }
-  }
-}
-*/
 
