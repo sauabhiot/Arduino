@@ -408,12 +408,13 @@ ISR(TIMER1_COMPA_vect){
     }
   }else{
     if(!skip()){
-      check_endstops();
+      //check_endstops();
       travelled = travelled + MM_PER_STEP;
       PORTD &= ~(1 << 7);
       PORTF &= ~(1 << 2);
       digitalWrite(ENABLE_Z_MOTOR_PIN, LOW);
       PORTA &= ~(1 << 2); 
+
       if(is_linear_motion){
         delta_x = (travelled * x_distance_ratio) - travelled_x;
         delta_y = (travelled * y_distance_ratio) - travelled_y;
@@ -441,6 +442,7 @@ ISR(TIMER1_COMPA_vect){
           step_e();
         }
       }else{
+        
         double arc_theta = travelled/radius;
         if(current_quadrant == 1) { // X INCREASING Y DECREASING CLOCKWISE 
           if(clockwise){
@@ -625,6 +627,8 @@ void set_quadrants(){
   int end_indx = end_quadrant;
   end_gcode_sub_indx = (end_indx - start_indx) ;
   current_quadrant = start_quadrant;
+  Serial.println(start_quadrant);
+  Serial.println(end_quadrant);
 }
 
 
@@ -826,6 +830,7 @@ void pre_process(){
     z_distance_ratio = z_diff/distance;
     e_distance_ratio = e_diff/distance;
   }else{
+
     arc_center_x = I + x_position_prev;
     arc_center_y = J + y_position_prev;
     intermediate_x = x_position;
@@ -847,6 +852,7 @@ void pre_process(){
     theta_diff = clockwise ? (two_pie- theta_diff) : theta_diff;
     double arc_distance = radius * theta_diff;
     
+
     z_circular_distance_ratio = z_diff/arc_distance;
     e_circular_distance_ratio = e_diff/arc_distance;
     set_quadrants();
@@ -909,6 +915,8 @@ void set_gcode_modes(){
       moveZ(1);
       moveZ(1);
       moveZ(1);
+      moveZ(1);
+      moveZ(0);
       home_x();
       home_y();
       home_z();
@@ -1237,7 +1245,7 @@ void backoff_z_from_endstop(){
     set_clockwise_for_z();
     step_z();
     delayMicroseconds(500);
-    if(k > 300) break;
+    if(k > 1000) break;
   }  
   digitalWrite(ENABLE_Z_MOTOR_PIN, HIGH);
   z_input = 0;
@@ -1534,15 +1542,17 @@ bool insertToSDCard(){
 
 
 void check_endstops(){
-  if(x_endstop_enabled && PINE & (1 << 5)){
-    backoff_x_from_endstop();
-  }
-  if(y_endstop_enabled && (PINJ & (1 << 0))){
-    backoff_y_from_endstop();
-  } 
-  if(z_endstop_enabled && (PIND & (1 << 2))){
-    backoff_z_from_endstop();
-  }
+    
+    if(x_endstop_enabled && PINE & (1 << 5)){
+      backoff_x_from_endstop();
+    }
+    if(y_endstop_enabled && (PINJ & (1 << 0))){
+      backoff_y_from_endstop();
+    } 
+    if(z_endstop_enabled && (PIND & (1 << 2))){
+      backoff_z_from_endstop();
+    }
+  
 }
 
 
@@ -1584,7 +1594,8 @@ void loop(){
 
   if(digitalRead(Z_HEIGHT_PROBE) == LOW && !plate_touched){
     plate_touched = true;
-    Serial.println("ok Touched");
+    Serial.print("ok Touched ");
+    Serial.println(z_position);
   }
   if(digitalRead(Z_HEIGHT_PROBE) == HIGH && plate_touched){
     plate_touched = false;
@@ -1606,9 +1617,7 @@ void loop(){
     int next_read = get_next_buffer_index_to_read();
     if(next_read > -1){
       prev_gcode_indx = gcode_indx;
-
       parse_gcodes();
-
     }
   }
   
