@@ -20,6 +20,14 @@
     return e_input;
   }
 
+  float Gcode::get_i(){
+    return i_input;
+  }
+
+  float Gcode::get_j(){
+    return j_input;
+  }
+
   uint8_t Gcode::get_code(){
     return code;
   }
@@ -51,6 +59,14 @@
   void Gcode::set_e(float e){
     e_input = e;
   }
+
+  void Gcode::set_i(float i){
+    i_input = i;
+  }
+
+  void Gcode::set_j(float j){
+    j_input = j;
+  }    
   
   void Gcode::set_code(uint8_t c){
     code = c;
@@ -66,4 +82,16 @@
 
   void Gcode::set_print_mode(bool pm3d){
     print_mode_3d = pm3d;
+  }
+
+  void Gcode::reset(){
+    x_input = NEGATIVE_THOUSAND;
+    y_input = NEGATIVE_THOUSAND;
+    z_input = NEGATIVE_THOUSAND;
+    e_input = NEGATIVE_THOUSAND;
+    
+    i_input = 0.0f;
+    j_input = 0.0f;
+    type = 'X';
+    code = -1;
   }

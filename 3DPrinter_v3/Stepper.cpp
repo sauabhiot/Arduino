@@ -38,6 +38,17 @@ float Stepper::get_previous_position(){
   return previous_position;
 }
 
+void Stepper::set_previous_position(float prev_pos){
+
+}
+
+void Stepper::check_endstop(){
+
+}
+
+void Stepper::set_endstop_check_enabled() {};
+void Stepper::set_endstop_check_disabled() {};
+
 volatile void Stepper::delay_1us_nop() {
   asm("nop"); asm("nop"); asm("nop"); asm("nop");
   asm("nop"); asm("nop"); asm("nop"); asm("nop");

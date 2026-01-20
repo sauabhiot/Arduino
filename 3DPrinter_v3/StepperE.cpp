@@ -38,6 +38,7 @@ float StepperE::get_previous_position(){
 }
 
 void StepperE::set_previous_position(bool absolute_positioning){
+  if(gcode->get_e() == NEGATIVE_THOUSAND) return;
   if(absolute_positioning)
     previous_position = gcode->get_e();
   else
@@ -45,17 +46,21 @@ void StepperE::set_previous_position(bool absolute_positioning){
 }
 
 float StepperE::get_coord(bool absolute_positioning){
-  if(absolute_positioning)
-    return gcode->get_e();
-  else
-    return previous_position + gcode->get_e();
+  if(gcode->get_e() == NEGATIVE_THOUSAND)
+    return previous_position;
+  else{  
+    if(absolute_positioning)
+      return gcode->get_e();
+    else
+      return previous_position + gcode->get_e();
+  }
 }
 
 int StepperE::get_direction(bool absolute_positioning){
   double inc = get_coord(absolute_positioning) - previous_position;
-  if(inc < 0)
+  if(inc < MM_PER_STEP)
     return -1;
-  if(inc > 0)
+  if(inc > MM_PER_STEP)
     return 1;
   else
     return 0;

@@ -40,8 +40,6 @@ void StepperX::home(){
     delayMicroseconds(100);
   }
   backoff();
-  set_previous_position(0.0f);
-  gcode->set_x(0.0001f);
   disable();
 }
 
@@ -56,6 +54,8 @@ void StepperX::backoff(){
     if(k>600) break;
   }
   disable();
+  set_previous_position(MM_PER_STEP);
+  gcode->set_x(MM_PER_STEP);
 }
 
 float StepperX::get_previous_position(){
@@ -63,24 +63,33 @@ float StepperX::get_previous_position(){
 }
 
 void StepperX::set_previous_position(bool absolute_positioning){
+  if(gcode->get_x() == NEGATIVE_THOUSAND) return;
   if(absolute_positioning)
     previous_position = gcode->get_x();
   else
     previous_position += gcode->get_x();
 }
 
+void StepperX::set_previous_position(float prev_pos){
+  previous_position = prev_pos;
+}
+
 float StepperX::get_coord(bool absolute_positioning){
-  if(absolute_positioning)
-    return gcode->get_x();
-  else
-    return previous_position + gcode->get_x();
+  if(gcode->get_x() == NEGATIVE_THOUSAND)
+    return previous_position;
+  else{
+    if(absolute_positioning)
+      return gcode->get_x();
+    else
+      return previous_position + gcode->get_x();
+  }
 }
 
 int StepperX::get_direction(bool absolute_positioning){
   double inc = get_coord(absolute_positioning) - previous_position;
-  if(inc < 0)
+  if(inc < MM_PER_STEP)
     return -1;
-  if(inc > 0)
+  if(inc > MM_PER_STEP)
     return 1;
   else
     return 0;
@@ -92,4 +101,19 @@ void StepperX::set_direction(bool absolute_positioning){
   }else if(get_direction(absolute_positioning) > 0){
     set_anti_clockwise();
   }
+}
+
+void StepperX::set_endstop_check_enabled() {
+  endstop_enabled = true;
+}
+
+void StepperX::set_endstop_check_disabled() {
+  endstop_enabled = false;
+}
+
+void StepperX::check_endstop(){
+  if(endstop_enabled && PINE & (1 << 5)){
+    backoff();
+    Serial.print("hit endpoint x, backing off");
+  }  
 }

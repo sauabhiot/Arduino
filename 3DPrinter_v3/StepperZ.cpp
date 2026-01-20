@@ -41,8 +41,6 @@ void StepperZ::home(){
     delayMicroseconds(500);
   }
   backoff();
-  set_previous_position(0.0f);
-  gcode->set_z(0.0001f);  
   disable();
 }
 
@@ -54,21 +52,24 @@ void StepperZ::backoff(){
     set_clockwise();
     step();
     delayMicroseconds(500);
-    if(k > 1000) break;
+    if(k > 2000) break;
   }  
   disable();
+  set_previous_position(MM_PER_STEP);
+  gcode->set_z(MM_PER_STEP);  
 }
 
 void StepperZ::moveNozzle(){
-  if(gcode->get_code() == 0 && !nozzle_lifted){
+  if(gcode->get_type() == 'G' && gcode->get_code() == 0){ //&& !nozzle_lifted){
     move('u');
     nozzle_lifted = true;
   }
-
-  if(gcode->get_code() == 1 && nozzle_lifted){
+  /*
+  if(gcode->get_type() == 'G' && (gcode->get_code() == 1 || gcode->get_code() == 2 || gcode->get_code() == 3) && nozzle_lifted){
     move('d');
     nozzle_lifted = false;    
   }  
+  */
 }
 
 void StepperZ::move(char dir){
@@ -91,24 +92,33 @@ float StepperZ::get_previous_position(){
 }
 
 void StepperZ::set_previous_position(bool absolute_positioning){
+  if(gcode->get_z() == NEGATIVE_THOUSAND) return;
   if(absolute_positioning)
     previous_position = gcode->get_z();
   else
     previous_position += gcode->get_z();
 }
 
+void StepperZ::set_previous_position(float prev_pos){
+  previous_position = prev_pos;
+}
+
 float StepperZ::get_coord(bool absolute_positioning){
-  if(absolute_positioning)
-    return gcode->get_z();
-  else
-    return previous_position + gcode->get_z();
+  if(gcode->get_z() == NEGATIVE_THOUSAND)
+    return previous_position;
+  else{  
+    if(absolute_positioning)
+      return gcode->get_z();
+    else
+      return previous_position + gcode->get_z();
+  }
 }
 
 int StepperZ::get_direction(bool absolute_positioning){
   double inc = get_coord(absolute_positioning) - previous_position;
-  if(inc < 0)
+  if(inc < MM_PER_STEP)
     return -1;
-  if(inc > 0)
+  if(inc > MM_PER_STEP)
     return 1;
   else
     return 0;
@@ -122,3 +132,17 @@ void StepperZ::set_direction(bool absolute_positioning){
   }
 }
 
+void StepperZ::set_endstop_check_enabled() {
+  endstop_enabled = true;
+}
+
+void StepperZ::set_endstop_check_disabled() {
+  endstop_enabled = false;
+}
+
+void StepperZ::check_endstop(){
+  if(endstop_enabled && (PIND & (1 << 2))){
+    backoff();
+    Serial.print("hit endpoint z, backing off");
+  }  
+}
