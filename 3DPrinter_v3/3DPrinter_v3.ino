@@ -8,7 +8,10 @@
 #include "SerialCommunication.h"
 
 volatile float travelled = 0.0f;
+volatile long travelled_in_steps = 0; 
+
 volatile float distance  = 0.0f;
+volatile long distance_in_steps = 0; 
 
 float x_increment = 0.0f, x_move_distance = 0.0f, x_travelled = 0.0f;
 float y_increment = 0.0f, y_move_distance = 0.0f, y_travelled = 0.0f;
@@ -32,6 +35,8 @@ float start_angle = 0.0f;
 uint8_t quadrant = -1;
 char temp_string[COMMAND_SIZE];
 long i = 0;
+
+float ARC_SEGMENT_LENGTH_NEW = 0;
 
 uint16_t accel_steps = 0, current_accel_step = 0, current_step_count = 0;
 float expected_distance = 0.0f, expected_deceleration_distance = 0.0f;
@@ -68,6 +73,8 @@ void preprocess(){
     float x_diff = abs(end_x_coord - start_x_coord);
     float y_diff = abs(end_y_coord - start_y_coord);
     distance = sqrt((x_diff * x_diff) + (y_diff * y_diff) + (z_diff * z_diff) + (e_diff * e_diff));
+    distance_in_steps = distance *STEPS_PER_MM;
+
     float total_distance_in_steps = round(distance * STEPS_PER_MM);
     float constant_velocity_distance_in_steps = total_distance_in_steps -(2 * accel_steps); 
     deceleration_start_step = accel_steps + constant_velocity_distance_in_steps;
@@ -83,22 +90,43 @@ void preprocess(){
     start_angle = atan2((start_y_coord - center_y), (start_x_coord - center_x));
     float end_angle = atan2((end_y_coord - center_y), (end_x_coord - center_x));
     float arc_angle = end_angle - start_angle;
-    arc_angle = (arc_angle == 0) ? (2 * 3.142857) : arc_angle;
-    arc_angle = (arc_angle < 0) ? (arc_angle + (22.0/7.0) * 2) : arc_angle;
+    if(gcode.get_code() == 2){ // ClockWise
+      arc_angle = (arc_angle > 0) ?  ((2 * (22.0/7.0)) - arc_angle): abs(arc_angle);
+    }
+    if(gcode.get_code() == 3){ // Anti ClockWise
+      arc_angle = (arc_angle < 0) ? (arc_angle + (2 * (22.0/7.0))) : arc_angle;
+    }
+    arc_angle = (arc_angle == 0) ? (2 * (22.0/7.0)) : arc_angle;
+    
     float arc_length = arc_angle * radius;
     distance = arc_length;
-    float delta_arc_angle = (ARC_SEGMENT_LENGTH/radius);
+    distance_in_steps = distance *STEPS_PER_MM;
+    ARC_SEGMENT_LENGTH_NEW = ARC_SEGMENT_LENGTH;   // NEED TO INVESTIGATE THIS
+    float delta_arc_angle = (ARC_SEGMENT_LENGTH_NEW/radius);
     delta_cos = cos(delta_arc_angle);
     delta_sin = sin(delta_arc_angle);
 
-    //Serial.println(center_x);
-    //Serial.println(center_y);
-    //Serial.println(arc_angle);
-    //Serial.println(distance);
-    //Serial.println(ARC_SEGMENT_LENGTH,DEC);
-    //Serial.println(delta_arc_angle,DEC);
-    //Serial.println(delta_cos,DEC);
-    //Serial.println(delta_sin,DEC);
+/*
+    Serial.println(start_angle,DEC);
+    Serial.println(end_angle,DEC);
+        
+    Serial.println(center_x,DEC);
+    Serial.println(center_y,DEC);
+  
+    Serial.println(radius,DEC);
+    Serial.println(arc_angle,DEC);
+    Serial.println(distance,DEC);
+    Serial.println(ARC_SEGMENT_LENGTH_NEW,DEC);
+    Serial.println(delta_arc_angle,DEC);
+    Serial.println(delta_cos,DEC);
+    Serial.println(delta_sin,DEC);
+    */
+   /* 
+    if(radius > 50) { // HIJACK from circular to straight line
+      is_linear_motion = true;
+      preprocess();
+    }
+    */
   }
 
   set_direction();
@@ -113,11 +141,13 @@ void preprocess(){
 
 void reset_move_distances(){
   travelled = 0.0f;
+  travelled_in_steps = 0;
   x_travelled = 0.0f;
   y_travelled = 0.0f;
   z_travelled = 0.0f;
   e_travelled = 0.0f;
   current_step_count = 0;
+  quadrant = -1;
   gcode.set_x(NEGATIVE_THOUSAND);
   gcode.set_y(NEGATIVE_THOUSAND);
   gcode.set_z(NEGATIVE_THOUSAND);
@@ -146,6 +176,16 @@ void enable_all_motors(){
 }
 
 void update_previous_move_positions(){
+  if(is_circular_motion){
+    float ap = xStepper.get_previous_position();
+    float ep = gcode.get_x();
+    if(abs(ap-ep) > 0.1){
+      Serial.print(gcode.get_line_no());
+      Serial.print("----");
+      Serial.println(abs(ap-ep),DEC);
+    }
+  }
+  
   xStepper.set_previous_position(absolute_positioning);
   yStepper.set_previous_position(absolute_positioning);
   zStepper.set_previous_position(absolute_positioning);
@@ -156,9 +196,9 @@ void reset_for_next_move(){
   TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
   TIFR1 |= (1 << OCF1A);
   isr_completed = true;
+  update_previous_move_positions(); 
   is_linear_motion = false;
   is_circular_motion = false;
-  update_previous_move_positions(); 
   disable_all_motors();
   reset_move_distances();
   gcode.reset();
@@ -195,7 +235,7 @@ void actuate_linear_motion(){
 }
 
 void handle_direction(float delta_x, float delta_y){
-  if(delta_x < 0 and delta_y > 0 && quadrant != 1){
+  if(delta_x < 0 && delta_y > 0 && quadrant != 1){
     quadrant = 1;
     
     if(gcode.get_code() == 3){
@@ -205,9 +245,9 @@ void handle_direction(float delta_x, float delta_y){
     } else {
       //Serial.println("Q4");
       xStepper.set_clockwise();
-      yStepper.set_anti_clockwise();
+      yStepper.set_clockwise();
     }
-  }else if(delta_x < 0 and delta_y < 0 && quadrant != 2){
+  }else if(delta_x < 0 && delta_y < 0 && quadrant != 2){
     quadrant = 2;
     
     if(gcode.get_code() == 3){
@@ -217,9 +257,9 @@ void handle_direction(float delta_x, float delta_y){
     } else {
       //Serial.println("Q3");
       xStepper.set_clockwise();
-      yStepper.set_clockwise();      
+      yStepper.set_anti_clockwise();      
     }
-  }else if(delta_x > 0 and delta_y < 0 && quadrant != 3){
+  }else if(delta_x > 0 && delta_y < 0 && quadrant != 3){
     quadrant = 3;
     
     if(gcode.get_code() == 3){
@@ -229,9 +269,9 @@ void handle_direction(float delta_x, float delta_y){
     } else {
       //Serial.println("Q2");
       xStepper.set_anti_clockwise();
-      yStepper.set_clockwise();
+      yStepper.set_anti_clockwise();
     }
-  }else if(delta_x > 0 and delta_y > 0  && quadrant != 4){
+  }else if(delta_x > 0 && delta_y > 0  && quadrant != 4){
     quadrant = 4;
     
     if(gcode.get_code() == 3){
@@ -241,10 +281,10 @@ void handle_direction(float delta_x, float delta_y){
     } else {
       //Serial.println("Q1");
       xStepper.set_anti_clockwise();
-      yStepper.set_anti_clockwise();
+      yStepper.set_clockwise();
     }
   }
-
+  //Serial.println(quadrant);
 }
 
 void actuate_circular_motion(){
@@ -252,8 +292,10 @@ void actuate_circular_motion(){
   float x_prev = xStepper.get_previous_position();
   float y_prev = yStepper.get_previous_position();
 
+  int direction = (gcode.get_code() == 2) ? -1 : 1;
+
   float sweep_angle = (travelled/radius);
-  float angle = start_angle + sweep_angle;
+  float angle = (start_angle + sweep_angle * direction);
   float x = center_x + (radius * cos(angle));
   float y = center_y + (radius * sin(angle));
 
@@ -263,6 +305,7 @@ void actuate_circular_motion(){
   }
   i++;
   */
+  //Serial.println(y);
   float delta_x = x - x_prev;
   float delta_y = y - y_prev;
 
@@ -303,11 +346,8 @@ bool skip2(){
 
 
 ISR(TIMER1_COMPA_vect){
-  if(travelled  >= distance){
-    reset_for_next_move();
-    //Serial.println(xStepper.get_previous_position(), DEC);
-    //Serial.println(yStepper.get_previous_position(), DEC);
-  }else{
+  if(travelled  < distance){
+  //if(travelled_in_steps < distance_in_steps){
     isr_completed = false;
     enable_all_motors();
     xStepper.check_endstop();
@@ -317,6 +357,7 @@ ISR(TIMER1_COMPA_vect){
       //skip();
       if(!skip()){
         travelled = travelled + MM_PER_STEP;
+        travelled_in_steps++;
         actuate_linear_motion();
       }else{
         // Keep steppermotors disabled during skip phase
@@ -326,9 +367,12 @@ ISR(TIMER1_COMPA_vect){
         eStepper.disable();
       }        
     }else if(is_circular_motion){
-      travelled = travelled + ARC_SEGMENT_LENGTH;
+      travelled = travelled + ARC_SEGMENT_LENGTH_NEW;
+      travelled_in_steps++;
       actuate_circular_motion();
-    }
+    }    
+  }else{
+    reset_for_next_move();
   }
 }
 
@@ -397,6 +441,7 @@ void handle_touch_plate(){
     plate_touched = false;
   }
 }
+
 
 void loop(){
   if(PCB_PRINTING) handle_touch_plate();

@@ -113,7 +113,10 @@ void StepperX::set_endstop_check_disabled() {
 
 void StepperX::check_endstop(){
   if(endstop_enabled && PINE & (1 << 5)){
+    Serial.println("Value: ");
+    Serial.println(get_previous_position());
     backoff();
     Serial.print("hit endpoint x, backing off");
+
   }  
 }

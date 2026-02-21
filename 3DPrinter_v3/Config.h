@@ -21,7 +21,7 @@ constexpr uint16_t STEPS_PER_MM = (STEPS_PER_REVOLUTION * MICROSTEPPING)/(SCREW_
 constexpr float MM_PER_STEP = 1.00/(float)STEPS_PER_MM; // 0.0025
 constexpr float NEGATIVE_THOUSAND = -1000.00f;
 
-constexpr float ARC_SEGMENT_LENGTH = (MM_PER_STEP/5);
+constexpr float ARC_SEGMENT_LENGTH = (MM_PER_STEP/5.0f);
 constexpr float MM_PER_STEP_EXTRUDER = MM_PER_STEP * (21.0f/5.0f);
 
 #endif

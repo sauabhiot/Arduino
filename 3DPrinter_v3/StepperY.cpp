@@ -46,7 +46,7 @@ void StepperY::home(){
 void StepperY::backoff(){
   enable();
   int k = 0;
-  int j = 4000;
+  int j = 1500;
   while(true){
     k++;
     set_clockwise();

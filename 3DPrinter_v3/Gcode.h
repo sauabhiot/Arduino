@@ -7,6 +7,7 @@ class Gcode{
   private:
     uint8_t code = -1;
     char type = 'X';
+    long line_no;
     float x_input;
     float y_input;
     float z_input;
@@ -20,6 +21,7 @@ class Gcode{
     Gcode();
     uint8_t get_code();
     char get_type();
+    long get_line_no();
     float get_x();
     float get_y();
     float get_z();
@@ -32,6 +34,7 @@ class Gcode{
 
     void set_code(uint8_t code);
     void set_type(char type);
+    void set_line_no(long line_no);
     void set_x(float x);
     void set_y(float y);
     void set_z(float z);

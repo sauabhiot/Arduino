@@ -15,12 +15,14 @@ arduino_serial = None
 zero_zero_z_offset = 0.0
 height_map = {}
 #gcode_file_path = "/home/saurabhsamant/Arduino/3DPrinter_v3/gcd_files/depth_test_rect.gcd"
-gcode_file_path = "/home/saurabhsamant/Arduino/3DPrinter_v3/gcd_files/Gerber_TopLayer.GTL.gcode"
+gcode_file_path = "/home/saurabhsamant/Downloads/Top_layer2.gcode"
+#gcode_file_path = "/home/saurabhsamant/Downloads/Gerber_TopLayer.GTL.gcode"
 X = 0.00
 Y = 0.00
 Z = 0.00
 prev_X = 0.00
 prev_Y = 0.00
+redo = True
 
 def send_command(command):
     if not command.endswith('\n'):
@@ -256,5 +258,9 @@ if __name__ == "__main__":
     
     input("Press Enter to continue to the next step...")
     arduino_serial.reset_input_buffer() 
-    read_gcode_file()
+    
+    while(redo):
+        read_gcode_file()
+        resp = input("Do you want to Redo? then Enter Y, else any other key")
+        if(resp!='Y'): break
     arduino_serial.close()

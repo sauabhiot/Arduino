@@ -7,6 +7,10 @@
   float Gcode::get_x(){
     return x_input;
   }
+
+  long Gcode::get_line_no(){
+    return line_no;
+  }
   
   float Gcode::get_y(){
     return y_input;
@@ -42,6 +46,10 @@
 
   bool Gcode::get_print_mode(){
     return print_mode_3d;
+  }
+
+  void Gcode::set_line_no(long ln){
+    line_no = ln;
   }
 
   void Gcode::set_x(float x){

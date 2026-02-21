@@ -12,6 +12,9 @@ void Parser::parse_gcode(char* gcode_line){
     char type = token[0];
     char* val= token+1;
     switch(type){
+      case 'N':
+        gcode->set_line_no(atoi(val));
+        break;
       case 'G':
         gcode->set_type('G');
         gcode->set_code(atoi(val));
